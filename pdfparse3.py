@@ -973,7 +973,7 @@ class PDFParser():
     # az xref-ben szereplo obj-ek feldolgozasa, file-beli sorrendben
     def walk_xref(self,pend):
         xref=dict(self.xref)
-        starts=self.obj_starts()
+        starts=self.obj_starts() if self.badxref else {}   # (csak ha van rossz bejegyzes: a teljes file-t atnezi)
         for oid in self.badxref:
             # a rossz pozicioju obj-et megkeressuk a file-ban (az utolso elofordulast), ahogy az olvasok is
             # (a hibat mar szamoltuk). Az obj_starts() egy menetben megvan, nem kell obj-onkent vegigkeresni a file-t.
@@ -1334,6 +1334,13 @@ class PDFParser():
     # a hivatkozott /Length ("12 0 R") erteke: a fajlban levo "12 0 obj <szam> endobj" (az utolso elofordulas,
     # incremental update-nel az ervenyes; a rossz ertek nem art, mert csak endstream-mel megerositve hasznaljuk)
     def resolve_length(self,oid,gen):
+        # eloszor az xref szerinti helyen (gyors); a teljes file obj_starts() terkepe csak ha ott nincs meg
+        x=self.xref.get(oid)
+        if x and x[1]==gen and type(x[0])==int:
+            p=x[0]
+            while p<len(self.d) and p<x[0]+4 and self.d[p] in WHITESPACE: p+=1
+            m=re_lenobj.match(self.d,p)
+            if m and int(m.group(0).split()[0])==oid: return int(m.group(1))
         for pos in reversed(self.obj_starts().get((oid,gen),[])):
             m=re_lenobj.match(self.d,pos)
             if m: return int(m.group(1))
@@ -1498,8 +1505,8 @@ class PDFParser():
             self.analyze_obj(oid,[oid,0,b'obj']+oo)
             return
         # egy obj vege a rakovetkezo (offset szerint nagyobb) obj kezdete, az utolsoe az adat vege. Nem a fejlec
-        # kovetkezo parjabol vesszuk: a fejlec sorrendje nem feltetlenul offset szerinti (a spec nem irja elo), es
-        # forditott sorrendnel hamis "invalid offset" hiba lett, ill. tobb obj egy tokenlistaba olvadt.
+        # kovetkezo parjabol vesszuk: a spec (ISO 32000-1, 7.5.7) novekvo sorrendet ir elo, de a szabalyserto, rendezetlen
+        # fejlecet is turjuk: forditott sorrendnel hamis "invalid offset" hiba lett, ill. tobb obj egy tokenlistaba olvadt.
         sorted_offs=sorted(set(o for x,o in pairs))
         nextoff={o:(sorted_offs[i+1] if i+1<len(sorted_offs) else len(dd)-offs) for i,o in enumerate(sorted_offs)}
         for ooid,ooff in pairs:
