@@ -852,7 +852,14 @@ class PDFParser():
             if self.debug: print('XREF: offset='+str(d[o:q]))
             try:
                 o=int(d[o:q])
-                self.startxref=(o,oend)
+            except ValueError:
+                # hianyzo / nem szam ertek (pl. "startxref\n%%EOF"): celzott hiba, nem kivetel. A %%EOF ellenorzes
+                # es az xref keresese (lent) igy is lefut.
+                self.err('XREF: invalid startxref value: %s'%(str(d[o:q][:32])))
+                q=o
+                o=-1
+            try:
+                if o>=0: self.startxref=(o,oend)
                 while q<pend and d[q]<=32: q+=1 # skip whitespace
                 if d[q:q+5]==b'%%EOF':
                     if pend>q+7 and re_structure.search(d,q+5):
@@ -877,14 +884,14 @@ class PDFParser():
                 # relativak (az olvasok is igy kezelik)
                 if hdr>0 and d[:hdr].strip(WHITESPACE)==b'':
                     print("JUNK: %d whitespace bytes before the %%PDF header"%(hdr))   # artalmatlan
-                    if not self.section_at(o) and self.section_at(o+hdr):
+                    if o>=0 and not self.section_at(o) and self.section_at(o+hdr):
                         self.base=hdr
                         o+=hdr
                 elif hdr>0:
                     kind=junk_kind(d[:hdr])
                     if kind=='HTML': self.add_html(d[:hdr])   # (l. az EOF utani html-t)
                     if self.deep_header: kind+=", header beyond the first 1024 bytes"
-                    if not self.section_at(o) and self.section_at(o+hdr):
+                    if o>=0 and not self.section_at(o) and self.section_at(o+hdr):
                         self.base=hdr
                         o+=hdr
                         self.err("JUNK: %d bytes before the %%PDF header (%s), offsets are relative to the header"%(hdr,kind))
@@ -894,7 +901,8 @@ class PDFParser():
                 if o<p or o>=oend:
                     # invalid offset, find xref...
                     o2=d.rfind(b'xref',p,oend) # a header vege es a startxref kezdte kozott keresunk visszafele...
-                    self.err('XREF: invalid startxref offset %d, xref found at %d'%(o,o2))
+                    if o>=0: self.err('XREF: invalid startxref offset %d, xref found at %d'%(o,o2))
+                    else: print('XREF: trying xref found at %d'%(o2))   # (a hibat mar szamoltuk)
                     o=o2
                 if o>=0: self.parse_xref(o,oend,pend)
             except Exception:
