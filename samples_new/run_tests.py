@@ -95,6 +95,13 @@ check('09 both objects parsed',all(("-> #%d: ['<', b'/Type', b'/Page'"%o) in out
 check('09 pages counted',pdf.pagecnt==3,str(pdf.pagecnt))
 check('09 no errors',pdf.errors==[],str(pdf.errors))
 
+# 10: header 1024 byte-on tul + szoveg a verzio utan (10.11)
+pdf,out=run('10_deep_header_text_after_version.pdf')
+check('10 deep header detected',pdf.deep_header and pdf.base==2000,"deep=%s base=%s"%(pdf.deep_header,pdf.base))
+check('10 binary header comment seen',pdf.binheader==True,str(pdf.binheader))
+check('10 only JUNK error',[m[:4] for m in msgs(pdf)]==['JUNK'] and 'bad pdf header' not in out,str(msgs(pdf)))
+check('10 pages',pdf.pagecnt==1 and not pdf.badxref,"%d %s"%(pdf.pagecnt,pdf.badxref))
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))

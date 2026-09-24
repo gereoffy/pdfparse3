@@ -840,7 +840,9 @@ class PDFParser():
         p+=5
         while p<pend and d[p] in b'0123456789.': p+=1
         headend=p
-        while p<pend and d[p]!=10 and d[p]!=13 and p<1024: p+=1
+        # (a korlatok a headerhez relativak: 1024 byte-on tuli header eseten az abszolut p<1024 sosem teljesult,
+        # a binheader hamis lett, es a header sorban a verzio utan allo szoveg hamis "INVALID object type" hibat adott)
+        while p<pend and d[p]!=10 and d[p]!=13 and p<hdr+1024: p+=1
 
         q=p
 #   2102 newline: b'\n' 1
@@ -856,7 +858,7 @@ class PDFParser():
 
         q=p
         if p<pend and d[p]==37:    # skip  %comment:
-            while p<pend and d[p]!=10 and d[p]!=13 and p<1024: p+=1
+            while p<pend and d[p]!=10 and d[p]!=13 and p<hdr+1024: p+=1
 #            while p<pend and (d[p]==10 or d[p]==13) and p<1024: p+=1
             if p<pend and d[p]==13: p+=1 # \r
             if p<pend and d[p]==10: p+=1 # \n
@@ -993,7 +995,7 @@ class PDFParser():
         d=self.d
         # ignore garbage before first obj (nem szamit hibanak)
         # nem a kovetkezo sor elejeig ugrunk, hanem az elso "N G obj"-ig, igy a szemettel egy sorban kezdodo obj sem veszik el
-        m=re_objstart.search(d,p,max(p,min(pend,1024)))
+        m=re_objstart.search(d,p,min(pend,p+1024))   # (a header vegetol szamitva, 1024-en tuli headernel is)
         if m and m.start()>p:
             g=d[p:m.start()].strip()
             # a szokasos sorvege + binaris komment sor nem szemet

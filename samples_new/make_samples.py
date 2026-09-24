@@ -8,8 +8,8 @@ import os
 HERE=os.path.dirname(os.path.abspath(__file__))
 
 # egy pdf osszeallitasa helyes xref tablaval. objs: [(oid, torzs), ...]  (a torzs az "N 0 obj" es "endobj" kozti resz)
-def build(objs,root=1,version=b'1.4',startxref_value=None,eof=True):
-    d=b'%PDF-'+version+b'\n%\xe2\xe3\xcf\xd3\n'
+def build(objs,root=1,version=b'1.4',startxref_value=None,eof=True,header_tail=b''):
+    d=b'%PDF-'+version+header_tail+b'\n%\xe2\xe3\xcf\xd3\n'
     offs={}
     for oid,body in objs:
         offs[oid]=len(d)
@@ -134,3 +134,9 @@ o5=b'<</Type/Page/Parent 2 0 R/A 1>>  '; o6=b'<</Type/Page/Parent 2 0 R/B 2>>'
 hdr=b'6 %d 5 0 '%len(o5)
 d,_,_=build(BASE+[(4,stream(b'<</Type/ObjStm/N 2/First %d>>'%len(hdr),hdr+o5+o6))])
 write('09_objstm_unsorted_header.pdf',d)
+
+# 10: a %PDF header az elso 1024 byte-on tul (2000 byte szemet elotte), es a header sorban a verzio utan szoveg
+#     ("%PDF-1.4 www.example.com", van ilyen iro). A header-sor feldolgozasanak korlatja a headerhez relativ kell
+#     legyen, kulonben binheader=False es hamis "INVALID object type" hiba (README 10.11).
+d,_,_=build(BASE,header_tail=b' www.example.com')
+write('10_deep_header_text_after_version.pdf',b'J'*2000+d)
