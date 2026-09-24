@@ -1495,9 +1495,14 @@ class PDFParser():
             if self.debug: print("OBJSTREAM->"+str(oo))
             self.analyze_obj(oid,[oid,0,b'obj']+oo)
             return
-        for k,(ooid,ooff) in enumerate(pairs):
+        # egy obj vege a rakovetkezo (offset szerint nagyobb) obj kezdete, az utolsoe az adat vege. Nem a fejlec
+        # kovetkezo parjabol vesszuk: a fejlec sorrendje nem feltetlenul offset szerinti (a spec nem irja elo), es
+        # forditott sorrendnel hamis "invalid offset" hiba lett, ill. tobb obj egy tokenlistaba olvadt.
+        sorted_offs=sorted(set(o for x,o in pairs))
+        nextoff={o:(sorted_offs[i+1] if i+1<len(sorted_offs) else len(dd)-offs) for i,o in enumerate(sorted_offs)}
+        for ooid,ooff in pairs:
             s=offs+ooff
-            e=offs+pairs[k+1][1] if k+1<len(pairs) else len(dd)
+            e=offs+nextoff[ooff]
             if s>len(dd) or e<s:
                 self.err("OBJSTREAM #%d: invalid offset for obj #%d: %d"%(oid,ooid,ooff))
                 continue

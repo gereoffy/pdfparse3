@@ -89,6 +89,12 @@ check('08 uncertain-length/no-eod content',got.get('noeod_uncertain.bin',b'').st
 check('08 only the uncertain one is an error',len(pdf.errors)==1 and pdf.errors[0][1].startswith('STREAM: decoding error in obj #8: LZW: no EOD code and the stream length is uncertain'),str(pdf.errors))
 check('08 missing EOD is a note',any('obj #4: LZW: no EOD code' in l for l in out.splitlines()),str([l for l in out.splitlines() if 'LZW' in l]))
 
+# 09: objstm fejlec nem offset-sorrendben (10.10): mindket belso obj megvan, nincs hamis hiba
+pdf,out=run('09_objstm_unsorted_header.pdf',debug=True)
+check('09 both objects parsed',all(("-> #%d: ['<', b'/Type', b'/Page'"%o) in out for o in (5,6)),str([l[:80] for l in out.splitlines() if 'OBJSTREAM #4' in l]))
+check('09 pages counted',pdf.pagecnt==3,str(pdf.pagecnt))
+check('09 no errors',pdf.errors==[],str(pdf.errors))
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))

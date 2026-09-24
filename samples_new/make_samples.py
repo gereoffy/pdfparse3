@@ -127,3 +127,10 @@ d,_,_=build(BASE+[
     (9,b'<</Type/Filespec/F(noeod_uncertain.bin)/EF<</F 8 0 R>>>>')])
 write('08_lzw_earlychange0_no_eod.pdf',d)
 with open(os.path.join(HERE,'08_payload.bin'),'wb') as f: f.write(payload)
+
+# 09: object stream, amelynek fejlece nem offset szerinti sorrendben sorolja a parokat (6-os obj elobb, pedig az adatban
+#     a 5-os az elso). Az obj hatarait a rendezett offsetekbol kell szamolni (README 10.10). Mindket obj /Type/Page.
+o5=b'<</Type/Page/Parent 2 0 R/A 1>>  '; o6=b'<</Type/Page/Parent 2 0 R/B 2>>'
+hdr=b'6 %d 5 0 '%len(o5)
+d,_,_=build(BASE+[(4,stream(b'<</Type/ObjStm/N 2/First %d>>'%len(hdr),hdr+o5+o6))])
+write('09_objstm_unsorted_header.pdf',d)
