@@ -76,7 +76,10 @@ class LZWDecode:
                     self.bytepos = self.bytepos + 1
             return value
 
-        # hiba eseten a reszben dekodolt adatot adja vissza, a hiba a self.error-ba kerul
+        # hiba eseten a reszben dekodolt adatot adja vissza, a hiba a self.error-ba kerul.
+        # A hianyzo EOD (stop) kod nem hiba, csak megjegyzes: egyes irok nem irjak ki (a kep adata ettol teljes), es az
+        # olvasok nem is ellenorzik -- mint a deflate-nel a hianyzo adler32. (A csonkolt LZW stream igy nem ismerheto
+        # fel, az LZW-ben nincs zaro blokk vagy checksum.)
         def decode(self) -> bytes:
             cW = self.CLEARDICT
             baos = []
@@ -84,7 +87,7 @@ class LZWDecode:
                 pW = cW
                 cW = self.next_code()
                 if cW == -1:
-                    self.error = "End of buffer reached without LZW stop code"
+                    self.note = "no EOD code at the end of the data (%d bytes decoded)"%(sum(len(x) for x in baos))
                     break
                 if cW == self.STOP:
                     break
