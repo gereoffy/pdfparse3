@@ -1,0 +1,42 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<</Type/Catalog/Pages 2 0 R>>
+endobj
+2 0 obj
+<</Type/Pages/Kids[3 0 R]/Count 1>>
+endobj
+3 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>
+endobj
+6 0 obj
+<</Type/Filespec/F(alpha.txt)/EF<</F 4 0 R>>>>
+endobj
+7 0 obj
+<</Type/Filespec/UF(beta.txt)/EF<</UF 5 0 R>>>>
+endobj
+4 0 obj
+<</Type/EmbeddedFile/Length 5>>stream
+AAAAA
+endstream
+endobj
+5 0 obj
+<</Type/EmbeddedFile/Length 5>>stream
+BBBBB
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000060 00000 n 
+0000000111 00000 n 
+0000000301 00000 n 
+0000000370 00000 n 
+0000000176 00000 n 
+0000000238 00000 n 
+trailer
+<</Size 8/Root 1 0 R>>
+startxref
+439
+%%EOF
