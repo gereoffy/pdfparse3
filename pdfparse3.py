@@ -1590,7 +1590,7 @@ class PDFParser():
                 i=objs.index(b'/Launch',i)+1
             except ValueError:
                 break
-            if objs[i-2]!=b'/S': continue
+            if i<2 or objs[i-2]!=b'/S': continue   # (i<2 csak elvi eset: az objs mindig "oid gen obj"-jal kezdodik)
             start=i-2
             depth=0
             while start>0:
