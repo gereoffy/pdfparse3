@@ -242,7 +242,7 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 
 ## 10. Talált hibák és állapotuk
 
-Prioritás szerint. Minden pont az adott bemenettel **reprodukálva** lett. A **10.1–10.7 és 10.9 javítva** (2026-09-24, egy-egy külön commit), regressziós tesztjeik a `samples_new/` könyvtárban vannak (11. fejezet). A 10.8 apróságai még nyitottak. A 10.1–10.7 pontokban a sorszámok az **eredeti** (`d993039`) változatra vonatkoznak.
+Prioritás szerint. Minden pont az adott bemenettel **reprodukálva** lett. A **10.1–10.7 és 10.9–10.11 javítva** (2026-09-24, egy-egy külön commit), regressziós tesztjeik a `samples_new/` könyvtárban vannak (11. fejezet). A 10.8 megmaradt apróságai még nyitottak. A 10.1–10.7 pontokban a sorszámok az **eredeti** (`d993039`) változatra vonatkoznak.
 
 ### 10.1 A buffer legvégén álló szám/kulcsszó utolsó karaktere elveszik – `parse_pdf_param`, 501–510. sor
 
@@ -320,11 +320,10 @@ A javítás: a `self.startxref` a `base` korrekció után, közvetlenül az xref
 
 Egy 50 MB-os, több ezer rossz bejegyzésű fájlnál ez percekig tarthatott. Nem helyességi hiba volt, de a "megengedő, mindent feldolgoz" célnak ellentmondott.
 
-### 10.8 Kisebb észrevételek (nyitott; a sorszámok a jelenlegi változatra vonatkoznak)
+### 10.8 Kisebb észrevételek (nyitott)
 
-- **`deflate_complete`** (263) és az **`import base64`** (23) nem használt.
-- **`parse_objstm`**, 1490. sor: az obj végét a fejléc **következő** párjának offsetje adja, azaz feltételezi, hogy a párok offset szerint növekvők. A specifikáció ezt nem írja elő; nem rendezett fejlécnél hamis `invalid offset` hibák jönnek. Javítás: a párok rendezése offset szerint a határok kiszámításához.
-- **Fejléc az első 1024 byte-on túl** (`deep_header`): a fejléc-sor és a bináris komment átugrása a 833. és 849. sor abszolút `p<1024` korlátja miatt nem fut, így `bad pdf header!` íródik ki és a `binheader` hamis lesz; a `scan_objs` 986. sorának kezdő szemét-átugrása is üres tartományt kap. Javítás: a korlát a `hdr+1024` legyen.
+(A nem használt `deflate_complete` és `import base64` törölve: commit `900aeb0`. Az objstm-fejléc és a mély fejléc pontja a 10.10–10.11-be került.)
+
 - **`os.listdir`** (1667): nem létező útvonalnál a program a feldolgozás előtt kivétellel leáll; a könyvtár alkönyvtárait is fájlként próbálja megnyitni (kezelt kivétel, de zajos).
 - **`analyze_obj` /Launch**: `objs[i-2]` `i=1`-nél `objs[-1]`-re hivatkozik (ártalmatlan, de véletlen egyezést adhat).
 - **Kiírások mérete**: a `JSCR:` és az `embedded image` sorok a teljes adatot kiírják (több MB-os JS-nél zajos); a többi helyen már van `[:256]` levágás.
@@ -336,6 +335,22 @@ Egy 50 MB-os, több ezer rossz bejegyzésű fájlnál ez percekig tarthatott. Ne
 A privát minták összehasonlító futásán derült ki (`err_lzw` könyvtár): egy fájl 5 LZW streamje mind `/EarlyChange 0`-val készült, és az író egyiknél sem írta ki a záró (EOD) kódot. A dekóder csak az EarlyChange=1 szélességváltást ismerte, ezért a 511./512. kód után két streamnél hamis „invalid code 1023 (dict size 511)” / „invalid code 936” hibát adott, és a kibontás a kép töredékénél megállt (10937 byte a 244280 helyett). A másik három streamnél a hiányzó EOD kód volt hiba, holott mind az 5 stream pontosan a kép méretére bomlik ki. A régi kód egyiküknél (obj 97) azért nem szólt, mert a hivatkozott `/Length` feloldása előtt a sorvége byte-ot is az adathoz vette, és annak első 5 bitje véletlenül kiegészítette a félbemaradt STOP kódot.
 
 A javítás: a `LZWDecode` `early` paramétert kap a stream `/DecodeParms`-ából (a szélességváltás feltétele `dictlen + early >= 2^bits`). A buffer vége EOD nélkül `note` lesz a dekódolt mérettel, ha a stream vége biztos (`PDFStream.exact`: a `parse_pdf_obj` a `/Length` után megtalálta az `endstream`-et, tehát az író pont ennyit írt ki, csak az EOD-t hagyta el), és `error` marad, ha az `endstream` keresése döntött (rossz vagy feloldhatatlan `/Length`, hiányzó `endstream`), mert az csonkolásra is utalhat. A deflate hiányzó adler32-jével analóg döntés, a hossz-bizonyosság feltételével.
+
+### 10.10 Objstm: az obj-határok a fejléc sorrendjéből – `parse_objstm`
+
+> **Javítva**: commit `3d8fde8`. Teszt: `samples_new/09_objstm_unsorted_header.pdf`.
+
+Az object stream fejlécének `oid offset` párjait a kód offset szerint növekvőnek feltételezte: a k-adik obj vége a k+1-edik pár offsetje volt. A specifikáció a sorrendet nem írja elő. Fordított sorrendnél a következő pár offsetje kisebb, ezért hamis „invalid offset” hiba lett és az obj kimaradt; nagyobb ugrásnál több obj olvadt egy tokenlistába, és az `analyze_obj` az egyik obj `/JS`-ét vagy `/Type /Page`-ét a másik számához kötötte. Kísérlet: ugyanaz a két oldal-obj a fejléc két sorrendjével 2, ill. 1 oldalt és egy hamis hibát adott.
+
+A javítás: a határ a rákövetkező, offset szerint nagyobb obj kezdete (rendezett offsethalmaz), az utolsóé az adat vége.
+
+### 10.11 A `%PDF` fejléc az első 1024 byte-on túl – `parse`, `scan_objs`
+
+> **Javítva**: commit `1a47bea`. Teszt: `samples_new/10_deep_header_text_after_version.pdf`.
+
+A fejlécet a kód az első 1024 byte után is megtalálja (`deep_header`, pl. RTFD csomagba ágyazott PDF), de a fejléc-sor további feldolgozásában három ciklus abszolút `p<1024` korláttal futott: a verzió utáni rész átugrása a sor végéig, a bináris komment átugrása, és a `scan_objs` elején az első `N G obj` keresése. 1024 utáni fejlécnél ezek eleve nem futottak le. Következmény: a `binheader` hamis lett (a TRANSFER-üzenet „binary header comment: NO” részét rontotta), `bad pdf header!` íródott ki, és ha a verzió után szöveg állt a sorban (`%PDF-1.5 www.opoosoft.com`), az objektumként értelmeződött: hamis „INVALID object type” hiba, amit ugyanez a fájl kevesebb szeméttel hiba nélkül átvészelt.
+
+A javítás: a korlátok a fejléchez relatívak (`hdr+1024`, ill. a fejléc végétől 1024), 0 offsetű fejlécnél változatlan érték.
 
 ## 11. Tesztek (`samples_new/`)
 
@@ -351,6 +366,8 @@ A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tar
 | `05_bad_startxref_xrefstream_prev_section.pdf` | ASCII xref-es első szekció + xref stream-es incremental update rossz `startxref`-fel (10.5): nincs hamis `invalid subsection header` |
 | `06_junk_before_header.pdf` | 8 byte szemét a `%PDF` előtt (10.6): `base=8`, a `startxref` a korrigált érték |
 | `07_validate_bad_xref_offsets.pdf` | validate mód, 2/4 xref-bejegyzés eltolva, a JS az egyik rossz offsetű obj-ban (10.7): a `walk_xref` mindet megtalálja |
+| `09_objstm_unsorted_header.pdf` | object stream fordított sorrendű fejléccel (10.10): mindkét belső obj megvan, 3 oldal, 0 hiba |
+| `10_deep_header_text_after_version.pdf` | 2000 byte szemét a `%PDF` előtt és szöveg a verzió után a fejléc-sorban (10.11): `base=2000`, `binheader` igaz, csak a JUNK hiba |
 | `08_lzw_earlychange0_no_eod.pdf` (+ `08_payload.bin`) | három LZW csatolmány (10.9): `/EarlyChange 0` záró kód nélkül és alap EarlyChange záró kóddal (byte-ra egyeznek a payloaddal, a hiányzó EOD megjegyzés), valamint záró kód nélkül feloldhatatlan `/Length 99 0 R`-rel: ez az egyetlen hiba |
 
 - `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül.
