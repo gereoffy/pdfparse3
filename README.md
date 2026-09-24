@@ -211,7 +211,7 @@ Egy obj token-listáján:
 
 - **string-obj**: ha az obj törzse egy string, `strobjs[oid]` (a `/JS 12 0 R` és Launch feloldáshoz); `http`/`script` tartalmút kiír;
 - **`/URI`**: kiírja (string) vagy megjegyzi a hivatkozott obj-t;
-- **Filespec** (`/Type /Filespec` vagy `/UF`): a neveit `fsobjs`-be teszi, és az `/EF << /F 3 0 R /UF 3 0 R >>` által hivatkozott stream obj-számaihoz rendeli a fájlnevet (`efnames`; a későbbi Filespec győz). A feldolgozás végén a `name_files` (1605) ezzel nevezi el a `/EmbeddedFile` tartalmakat; a Filespec nélküli stream `pdfstream.dat` marad;
+- **Filespec** (`/Type /Filespec` vagy `/UF`): a neveit `fsobjs`-be teszi, és az `/EF << /F 3 0 R /UF 3 0 R >>` által hivatkozott stream obj-számaihoz rendeli a fájlnevet (`efnames`; a későbbi Filespec győz). Ha az `/EF` maga is hivatkozás (`/EF 39 0 R`, külön objektumban álló `<< /F 47 0 R >>` dict), a nevet `efrefs`-be teszi, az ilyen, csak `/F` `/UF` `/DOS` `/Mac` `/Unix` kulcsú dict-eket pedig `efdicts`-be. A feldolgozás végén a `name_files` először az `efrefs`→`efdicts` láncot oldja fel, majd ezzel nevezi el a `/EmbeddedFile` tartalmakat; a Filespec nélküli stream `pdfstream.dat` marad;
 - **`/JS`**: minden előfordulás; string → azonnal `pdfstream.js`, hivatkozás → `jsrefs`, a végén `resolve_js` oldja fel (string-obj vagy stream);
 - **`/S /Launch`**: az egész action dict-et bejárja, a `/F`, `/Win`, `/Unix`, `/Mac`, `/P`, `/D`, `/O` értékeket összefűzi; a hivatkozott `/F`-et a végén `resolve_launch` oldja fel (Filespec nevei, string-obj, vagy az obj összes stringje);
 - **oldalak**: `/Type /Page` számlálás, `/Type /Pages /Count` maximuma.
@@ -283,7 +283,7 @@ A javítás: a `PDFParser.resolve_length` az `obj_starts()` gyorsítótárból m
 
 ### 10.4 Csatolmány-nevek sorrend alapján párosulnak – `analyze_obj`, 1470–1477. sor és `parse_stream`, 1216–1218. sor
 
-> **Javítva**: commit `51c9808` (`efnames`, `filestreams`, `name_files`; a `streamname` megszűnt). Teszt: `samples_new/04a_...` és `04b_...`.
+> **Javítva**: commit `51c9808` (`efnames`, `filestreams`, `name_files`; a `streamname` megszűnt), kiegészítve a hivatkozott `/EF 39 0 R` alakkal (`efrefs`, `efdicts`), amelyet a privát minták összehasonlító futása hozott elő. Teszt: `samples_new/04a_...`, `04b_...`, `04c_...`.
 
 A Filespec neve a `streamname` változóba kerül, és a **következő** `/EmbeddedFile` kapja meg; utólag csak az utolsó `pdfstream.dat` nevezhető át. Két Filespec, majd két stream sorrendnél az első stream a második nevét kapja, a második névtelen marad. A kód a `/EF << /F 3 0 R >>` hivatkozást (amely egyértelműen összeköti a kettőt) nem használja. A szerző maga is jelzi ("hu de gany").
 
@@ -347,7 +347,7 @@ A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tar
 | `01_objstm_last_token.pdf` | object stream, amelynek utolsó obj-a egy szám, és az adat pont ott végződik (10.1) |
 | `02_startxref_no_value.pdf` | `startxref` után rögtön `%%EOF` (10.2): célzott hiba, az xref-et a tartalék megtalálja |
 | `03_indirect_length_embedded_pdf.pdf` | tömörítetlen beágyazott PDF (benne `endstream`), hivatkozott `/Length` (10.3): teljes csatolmány, `inner.pdf` néven |
-| `04a_attachments_filespec_first.pdf`, `04b_attachments_stream_first.pdf` | két csatolmány, a Filespec-ek a streamek előtt / után (10.4): `alpha.txt`/`beta.txt` helyes párosítás |
+| `04a_attachments_filespec_first.pdf`, `04b_attachments_stream_first.pdf`, `04c_attachments_indirect_ef.pdf` | két csatolmány, a Filespec-ek a streamek előtt / után, ill. hivatkozott `/EF 8 0 R` dict-tel (10.4): `alpha.txt`/`beta.txt` helyes párosítás |
 | `05_bad_startxref_xrefstream_prev_section.pdf` | ASCII xref-es első szekció + xref stream-es incremental update rossz `startxref`-fel (10.5): nincs hamis `invalid subsection header` |
 | `06_junk_before_header.pdf` | 8 byte szemét a `%PDF` előtt (10.6): `base=8`, a `startxref` a korrigált érték |
 | `07_validate_bad_xref_offsets.pdf` | validate mód, 2/4 xref-bejegyzés eltolva, a JS az egyik rossz offsetű obj-ban (10.7): a `walk_xref` mindet megtalálja |

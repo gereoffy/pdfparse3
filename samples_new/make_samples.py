@@ -61,6 +61,9 @@ fs=[(6,b'<</Type/Filespec/F(alpha.txt)/EF<</F 4 0 R>>>>'),(7,b'<</Type/Filespec/
 st=[(4,stream(b'<</Type/EmbeddedFile>>',b'AAAAA')),(5,stream(b'<</Type/EmbeddedFile>>',b'BBBBB'))]
 d,_,_=build(BASE+fs+st); write('04a_attachments_filespec_first.pdf',d)
 d,_,_=build(BASE+st+fs); write('04b_attachments_stream_first.pdf',d)
+# 04c: az /EF hivatkozas (kulon obj-ban a << /F 4 0 R >> dict), a Filespec-ek a streamek utan, az EF dict-ek legvegen
+fsr=[(6,b'<</Type/Filespec/F(alpha.txt)/EF 8 0 R>>'),(7,b'<</Type/Filespec/UF(beta.txt)/EF 9 0 R>>'),(8,b'<</F 4 0 R>>'),(9,b'<</UF 5 0 R/F 5 0 R>>')]
+d,_,_=build(BASE+st+fsr); write('04c_attachments_indirect_ef.pdf',d)
 
 # 05: elso szekcio ASCII xref-fel, majd incremental update xref stream-mel es rossz startxref-fel:
 #     az egyetlen ASCII "xref" szo a korabbi "startxref"-ben van (README 10.5)

@@ -54,7 +54,7 @@ check('03 attachment complete',inner and len(inner[0][0])==declared and bytes(in
 check('03 no errors',pdf.errors==[],str(pdf.errors))
 
 # 04: ket csatolmany, Filespec elobb / utobb (10.4)
-for name in ('04a_attachments_filespec_first.pdf','04b_attachments_stream_first.pdf'):
+for name in ('04a_attachments_filespec_first.pdf','04b_attachments_stream_first.pdf','04c_attachments_indirect_ef.pdf'):
     pdf,out=run(name)
     got=sorted((bytes(d),n) for d,n in pdf.content)
     check(name[:3]+' names',got==[(b'AAAAA','alpha.txt'),(b'BBBBB','beta.txt')],str(got))
