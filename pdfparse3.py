@@ -20,8 +20,6 @@ import traceback
 import zlib
 import re
 
-import base64
-
 WHITESPACE=b'\x00\t\n\x0c\r '
 
 def hexdigit(a):
@@ -266,10 +264,6 @@ def inflate(d):
         if len(rd)>len(dd): dd=rd
     if err: return dd,"ZLIB: %s (decoded %d bytes)"%(err,len(dd)),None
     return dd,"ZLIB: truncated stream? decoded %d/%d bytes"%(len(dd),len(d)),None
-
-# a deflate adat teljes-e (raw deflate, a zlib header es az adler32 checksum nelkul)
-def deflate_complete(d):
-    return raw_inflate(d[2:])[1]
 
 # PNG (10-15) es TIFF (2) predictor visszaalakitasa (/DecodeParms)
 def unpredict(d,parms):
