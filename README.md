@@ -147,7 +147,7 @@ A `PDFStream.decode(predictor=False)` (332. sor) a `/Filter` lista sorrendjében
 | Szűrő | Függvény | Viselkedés |
 |---|---|---|
 | `/FlateDecode` | `inflate` (226) | Lásd alább. |
-| `/LZWDecode` | `LZWDecode` (38) | pypdf-ből átvett, hiba esetén a részeredményt adja vissza (`error`), az EOD utáni maradékot megjegyzi (`note`). `/EarlyChange` alapértelmezett (1) viselkedéssel. |
+| `/LZWDecode` | `LZWDecode` (40) | pypdf-ből átvett; a `/DecodeParms /EarlyChange` (0/1) paramétert kezeli. Érvénytelen kód hiba (a részeredményt adja vissza). A hiányzó EOD (záró) kód **megjegyzés**, ha a stream vége a `/Length` alapján biztos (`PDFStream.exact`: a `/Length` után ott az `endstream`), mert akkor az író pont ennyit írt ki (mint a Flate-nél a hiányzó adler32); ha az `endstream` keresése döntött, **hiba**, mert csonkolásra is utalhat. Az EOD utáni maradékot is megjegyzi. |
 | `/ASCII85Decode` | `ASCII85Decode` (154) | Megengedő: 32 bites túlcsordulás levágva, `y` (btoa) elfogadva, érvénytelen karakterek átugorva; mindez megjegyzés, nem hiba. |
 | `/ASCIIHexDecode` | `ASCIIHexDecode` (125) | Érvénytelen karakter és hiányzó `>` hiba, de dekódol tovább. |
 | `/RunLengthDecode` | `RunLengthDecode` (186) | Egyszerű, hibát nem jelez. |
@@ -234,7 +234,7 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 
 - A hivatkozott `/Length` feloldása a fájlban levő `N G obj <szám> endobj` alakú objektumra épül; ha a hossz-objektum egy object streamben van, nem találja meg, és az `endstream` keresése dönt (mint régen).
 - Titkosított PDF-nél nincs dekódolás; a `/Encrypt` csak a trailerből derül ki, a `scan_objs` közben talált `trailer`-ből nem.
-- Az LZW `/EarlyChange 0` paramétert nem kezeli (a 114. sor a pypdf alapértelmezett, EarlyChange=1 viselkedése).
+- A csonkolt LZW stream csak a hosszából ismerhető fel: az LZW-ben nincs záró blokk vagy ellenőrzőösszeg, ezért a hiányzó EOD kód megjegyzés, ha a `/Length` biztosan megadja a stream végét, és hiba, ha nem (10.9). Egy `/Length`-hez igazított, de csonka LZW adat (pl. `samples/lzw_trunc.pdf`) így nem hiba. A Flate-nél a hiányzó záró blokk mindig hiba.
 - A TIFF-predictor csak 8 bit/komponensre működik; a `/DecodeParms` hivatkozott (`R`) értékei `TypeError`-t, azaz hamis `Predictor:` hibát adnak.
 - Inline image (`BI ... ID ... EI`) csak tartalom-streamen belül létezik, amit a program nem elemez; a 637. sor ága gyakorlatilag csak szemétnél fut, és a teljes `objs` listát kiírja.
 - Validate módban (`walk_xref`) a rejtett, xref-ben nem szereplő obj-ok nem kerülnek elő (szándékos: a szerkesztett PDF-ben ugyanaz az obj többször is szerepel, csak az utolsó érvényes).
@@ -242,7 +242,7 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 
 ## 10. Talált hibák és állapotuk
 
-Prioritás szerint. Minden pont az adott bemenettel **reprodukálva** lett. A **10.1–10.7 javítva** (2026-09-24, egy-egy külön commit), regressziós tesztjeik a `samples_new/` könyvtárban vannak (11. fejezet). A 10.8 apróságai még nyitottak. A 10.1–10.7 pontokban a sorszámok az **eredeti** (`d993039`) változatra vonatkoznak.
+Prioritás szerint. Minden pont az adott bemenettel **reprodukálva** lett. A **10.1–10.7 és 10.9 javítva** (2026-09-24, egy-egy külön commit), regressziós tesztjeik a `samples_new/` könyvtárban vannak (11. fejezet). A 10.8 apróságai még nyitottak. A 10.1–10.7 pontokban a sorszámok az **eredeti** (`d993039`) változatra vonatkoznak.
 
 ### 10.1 A buffer legvégén álló szám/kulcsszó utolsó karaktere elveszik – `parse_pdf_param`, 501–510. sor
 
@@ -329,6 +329,14 @@ Egy 50 MB-os, több ezer rossz bejegyzésű fájlnál ez percekig tarthatott. Ne
 - **`analyze_obj` /Launch**: `objs[i-2]` `i=1`-nél `objs[-1]`-re hivatkozik (ártalmatlan, de véletlen egyezést adhat).
 - **Kiírások mérete**: a `JSCR:` és az `embedded image` sorok a teljes adatot kiírják (több MB-os JS-nél zajos); a többi helyen már van `[:256]` levágás.
 
+### 10.9 LZW: `/EarlyChange 0` hamis „invalid code” hibák, hiányzó EOD kód hibaként – `LZWDecode`
+
+> **Javítva**: commitok `a729b3d` (EarlyChange), `eaf0415` (EOD megjegyzés) és `2e3b28d` (csak biztos hossznál). Teszt: `samples_new/08_lzw_earlychange0_no_eod.pdf`.
+
+A privát minták összehasonlító futásán derült ki (`err_lzw` könyvtár): egy fájl 5 LZW streamje mind `/EarlyChange 0`-val készült, és az író egyiknél sem írta ki a záró (EOD) kódot. A dekóder csak az EarlyChange=1 szélességváltást ismerte, ezért a 511./512. kód után két streamnél hamis „invalid code 1023 (dict size 511)” / „invalid code 936” hibát adott, és a kibontás a kép töredékénél megállt (10937 byte a 244280 helyett). A másik három streamnél a hiányzó EOD kód volt hiba, holott mind az 5 stream pontosan a kép méretére bomlik ki. A régi kód egyiküknél (obj 97) azért nem szólt, mert a hivatkozott `/Length` feloldása előtt a sorvége byte-ot is az adathoz vette, és annak első 5 bitje véletlenül kiegészítette a félbemaradt STOP kódot.
+
+A javítás: a `LZWDecode` `early` paramétert kap a stream `/DecodeParms`-ából (a szélességváltás feltétele `dictlen + early >= 2^bits`). A buffer vége EOD nélkül `note` lesz a dekódolt mérettel, ha a stream vége biztos (`PDFStream.exact`: a `parse_pdf_obj` a `/Length` után megtalálta az `endstream`-et, tehát az író pont ennyit írt ki, csak az EOD-t hagyta el), és `error` marad, ha az `endstream` keresése döntött (rossz vagy feloldhatatlan `/Length`, hiányzó `endstream`), mert az csonkolásra is utalhat. A deflate hiányzó adler32-jével analóg döntés, a hossz-bizonyosság feltételével.
+
 ## 11. Tesztek (`samples_new/`)
 
 A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tartalmazza: kis, kézzel összeállított PDF-eket, mindegyik egy-egy hibát céloz.
@@ -343,8 +351,9 @@ A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tar
 | `05_bad_startxref_xrefstream_prev_section.pdf` | ASCII xref-es első szekció + xref stream-es incremental update rossz `startxref`-fel (10.5): nincs hamis `invalid subsection header` |
 | `06_junk_before_header.pdf` | 8 byte szemét a `%PDF` előtt (10.6): `base=8`, a `startxref` a korrigált érték |
 | `07_validate_bad_xref_offsets.pdf` | validate mód, 2/4 xref-bejegyzés eltolva, a JS az egyik rossz offsetű obj-ban (10.7): a `walk_xref` mindet megtalálja |
+| `08_lzw_earlychange0_no_eod.pdf` (+ `08_payload.bin`) | három LZW csatolmány (10.9): `/EarlyChange 0` záró kód nélkül és alap EarlyChange záró kóddal (byte-ra egyeznek a payloaddal, a hiányzó EOD megjegyzés), valamint záró kód nélkül feloldhatatlan `/Length 99 0 R`-rel: ez az egyetlen hiba |
 
-- `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával; új minta ide kerül.
+- `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül.
 - `run_tests.py` – lefuttatja a mintákat és a hozzájuk tartozó elvárásokat, valamint néhány egységtesztet (lexer token a buffer végén, `counts_upto`, `rfind_xref`). Kilépési kód 0, ha minden rendben; `-v` kapcsolóval a sikeres ellenőrzéseket is kiírja.
 
 ```bash

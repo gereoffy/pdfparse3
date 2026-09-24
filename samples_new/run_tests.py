@@ -79,6 +79,16 @@ check('07 all objects walked',sorted(pdf.dom)==[1,2,3,4],str(sorted(pdf.dom)))
 check('07 js found',[n for d,n in pdf.content]==['pdfstream.js'],str(pdf.content))
 check('07 single summary error',msgs(pdf)==['XREF: 2/4 entries point to wrong positions'],str(msgs(pdf)))
 
+# 08: LZW /EarlyChange 0 zaro kod nelkul + alap LZW zaro koddal (10.9)
+pdf,out=run('08_lzw_earlychange0_no_eod.pdf')
+payload=load('08_payload.bin')
+got={n:bytes(d) for d,n in pdf.content}
+check('08 early0/no-eod complete',got.get('early0_noeod.bin')==payload,"%s bytes"%len(got.get('early0_noeod.bin',b'')))
+check('08 early1/eod complete',got.get('early1_eod.bin')==payload,"%s bytes"%len(got.get('early1_eod.bin',b'')))
+check('08 uncertain-length/no-eod content',got.get('noeod_uncertain.bin',b'').startswith(payload),"%s bytes"%len(got.get('noeod_uncertain.bin',b'')))
+check('08 only the uncertain one is an error',len(pdf.errors)==1 and pdf.errors[0][1].startswith('STREAM: decoding error in obj #8: LZW: no EOD code and the stream length is uncertain'),str(pdf.errors))
+check('08 missing EOD is a note',any('obj #4: LZW: no EOD code' in l for l in out.splitlines()),str([l for l in out.splitlines() if 'LZW' in l]))
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))

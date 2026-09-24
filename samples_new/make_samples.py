@@ -85,3 +85,42 @@ d,offs,xo=build(objs)
 for oid in (3,4):
     d=d.replace(b'%010d 00000 n \n'%offs[oid],b'%010d 00000 n \n'%(offs[oid]+3))
 write('07_validate_bad_xref_offsets.pdf',d)
+
+# egyszeru LZW kodolo (a dekoder tesztjehez). early: /EarlyChange; eod=False: a zaro kod kihagyasa (egyes irok igy tesznek)
+def lzw_encode(data,early=1,eod=True):
+    table={bytes([i]):i for i in range(256)}
+    nxt=258; bits=9
+    codes=[(256,9)]
+    w=b''
+    for c in data:
+        wc=w+bytes([c])
+        if wc in table: w=wc; continue
+        codes.append((table[w],bits))
+        table[wc]=nxt; nxt+=1
+        if nxt+early>(1<<bits) and bits<12: bits+=1
+        w=bytes([c])
+    if w: codes.append((table[w],bits))
+    if eod: codes.append((257,bits))
+    acc=n=0; out=bytearray()
+    for code,b in codes:
+        acc=(acc<<b)|code; n+=b
+        while n>=8: out.append((acc>>(n-8))&0xFF); n-=8
+    if n: out.append((acc<<(8-n))&0xFF)
+    return bytes(out)
+
+# 08: LZW /EarlyChange 0 zaro kod nelkul (obj 4), es alap EarlyChange 1 zaro koddal (obj 5): mindketto teljes,
+#     obj 8: zaro kod nelkul, bizonytalan hosszal -> hiba (README 10.9). Az adat eleg hosszu, hogy a 9->10->11 bites szelessegvaltas is megtortenjen.
+import random
+random.seed(8)
+payload=bytes(random.randrange(256) for _ in range(3000))
+assert lzw_encode(payload,0,False)!=lzw_encode(payload,1,True)
+d,_,_=build(BASE+[
+    (4,stream(b'<</Type/EmbeddedFile/Filter/LZWDecode/DecodeParms<</EarlyChange 0>>>>',lzw_encode(payload,0,False))),
+    (5,stream(b'<</Type/EmbeddedFile/Filter/LZWDecode>>',lzw_encode(payload,1,True))),
+    (6,b'<</Type/Filespec/F(early0_noeod.bin)/EF<</F 4 0 R>>>>'),
+    (7,b'<</Type/Filespec/F(early1_eod.bin)/EF<</F 5 0 R>>>>'),
+    # zaro kod nelkul ES feloldhatatlan /Length (99 0 R): a stream vege bizonytalan -> a hianyzo EOD itt hiba
+    (8,stream(b'<</Type/EmbeddedFile/Filter/LZWDecode>>',lzw_encode(payload,1,False)).replace(b'/Length %d>>'%len(lzw_encode(payload,1,False)),b'/Length 99 0 R>>')),
+    (9,b'<</Type/Filespec/F(noeod_uncertain.bin)/EF<</F 8 0 R>>>>')])
+write('08_lzw_earlychange0_no_eod.pdf',d)
+with open(os.path.join(HERE,'08_payload.bin'),'wb') as f: f.write(payload)
