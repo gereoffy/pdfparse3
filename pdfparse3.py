@@ -499,12 +499,15 @@ def parse_pdf_param(d,p,pend,err=print_err):
 
         else:
             # read BODY
+            # (az aktualis karaktert eloszor hozzafuzzuk, es utana nezzuk a kovetkezot: igy a buffer legvegen
+            # allo token utolso karaktere sem veszik el, pl. objstm utolso obj-a, "true" -> "tru" volt)
+            data.append(c)
             while p<pend:
-                data.append(c)
                 c=d[p] # next char
                 if c<=0x20 or c in [40,41, 60,62, 91,93, 123,125, 47, 37]:  #  () <> [] {} / %  = whitespace/separator
                     break
                 p+=1
+                data.append(c)
             try:
                 if len(data)<=20: return p,int(data)   # (tobb millio jegyu "szamot" nem alakitunk at: negyzetes ideju lenne)
             except Exception:
