@@ -961,14 +961,14 @@ class PDFParser():
     # az xref-ben szereplo obj-ek feldolgozasa, file-beli sorrendben
     def walk_xref(self,pend):
         xref=dict(self.xref)
+        starts=self.obj_starts()
         for oid in self.badxref:
             # a rossz pozicioju obj-et megkeressuk a file-ban (az utolso elofordulast), ahogy az olvasok is
-            # (a hibat mar szamoltuk)
-            pos=None
-            for m in re.finditer(rb'(?<![0-9])%d[\x00\t\n\x0c\r ]+%d[\x00\t\n\x0c\r ]+obj'%(oid,xref[oid][1] if type(xref[oid][1])==int else 0),self.d):
-                pos=m.start()
-            if pos==None or pos>=pend: del xref[oid]
-            else: xref[oid]=(pos,xref[oid][1])
+            # (a hibat mar szamoltuk). Az obj_starts() egy menetben megvan, nem kell obj-onkent vegigkeresni a file-t.
+            gen=xref[oid][1] if type(xref[oid][1])==int else 0
+            poss=[x for x in starts.get((oid,gen),[]) if x<pend]
+            if not poss: del xref[oid]
+            else: xref[oid]=(poss[-1],xref[oid][1])
         noend=[]
         for oid,(pos,gen) in sorted(xref.items(),key=lambda x:x[1][0]):
             p,objs,stream=parse_pdf_obj(self.d,pos,pend,stop=b'endobj',err=self.err,lenref=self.resolve_length)
@@ -1364,9 +1364,26 @@ class PDFParser():
         if len(rows)<3: return 0,0
         deltas=[x[1] for x in rows]
         if len(set(deltas))<2: return 0,0   # allando eltolas: nem sorvege (pl. szemet a header elott)
-        if all(x>0 for x in deltas) and deltas==sorted(deltas) and all(dl<=d.count(b'\r\n',0,P) for pos,dl,P in rows): return 1,len(rows)
-        if all(x<0 for x in deltas) and deltas==sorted(deltas,reverse=True) and all(-dl<=d.count(b'\n',0,P) for pos,dl,P in rows): return -1,len(rows)
+        if all(x>0 for x in deltas) and deltas==sorted(deltas):
+            cnt=self.counts_upto(b'\r\n',[P for pos,dl,P in rows])
+            if all(dl<=cnt[P] for pos,dl,P in rows): return 1,len(rows)
+        if all(x<0 for x in deltas) and deltas==sorted(deltas,reverse=True):
+            cnt=self.counts_upto(b'\n',[P for pos,dl,P in rows])
+            if all(-dl<=cnt[P] for pos,dl,P in rows): return -1,len(rows)
         return 0,0
+
+    # d.count(needle,0,P) minden megadott P-re, de egy menetben (a bejegyzesenkenti file-eleji szamlalas
+    # negyzetes ideju volt sok rossz xref bejegyzesnel). return: {P: darab}
+    def counts_upto(self,needle,positions):
+        res={}
+        n=0
+        last=0
+        for P in sorted(set(positions)):
+            # a hatart atlogo talalatot (pl. '\r' | '\n') az elozo szakasz nem szamolta, itt kell
+            if P>last: n+=self.d.count(needle,max(0,last-(len(needle)-1)),P)
+            last=max(last,P)
+            res[P]=n
+        return res
 
     def check_transfer(self):
         n,m,o=self.len_crlf,self.len_lf,self.len_other
