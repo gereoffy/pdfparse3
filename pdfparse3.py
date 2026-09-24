@@ -43,6 +43,7 @@ class LZWDecode:
             self.CLEARDICT = 256
             self.data = data
             self.early = 1 if early not in (0,1) else early
+            self.noeod = False   # az adat EOD (stop) kod nelkul ert veget
             self.error = None
             self.note = None
             self.bytepos = 0
@@ -87,6 +88,7 @@ class LZWDecode:
                 pW = cW
                 cW = self.next_code()
                 if cW == -1:
+                    self.noeod = True
                     self.note = "no EOD code at the end of the data (%d bytes decoded)"%(sum(len(x) for x in baos))
                     break
                 if cW == self.STOP:
@@ -331,6 +333,7 @@ class PDFStream():
         self.pos=None       # az adat kezdete, az endstream pozicioja es a /Length (ha kozvetlen ertek)
         self.endpos=None    # a file-ban (a sorvege-serules felismeresehez)
         self.declared=None
+        self.exact=False    # a stream vege biztos: a /Length utan (whitespace-ek utan) ott az endstream
     def add_note(self,n):
         if n: self.note=self.note+"; "+n if self.note else n
     # nem dob exceptiont: hiba eseten az addig dekodolt adatot adja vissza, a (legelso) hiba a self.error-ba kerul
@@ -353,7 +356,11 @@ class PDFStream():
                     lz=LZWDecode(d,(self.parms or {}).get(b'/EarlyChange',1))
                     d=lz.decode()
                     if lz.error: e="LZW: "+lz.error
-                    if lz.note: self.add_note("LZW: "+lz.note)
+                    # a hianyzo EOD csak akkor megjegyzes, ha a stream veget a /Length biztosan megadja (az iro pont
+                    # ennyit irt ki, csak az EOD-t hagyta el). Ha az endstream keresese dontott (rossz/hianyzo /Length,
+                    # hianyzo endstream), a hiany csonkolasra is utalhat: hiba.
+                    elif lz.noeod and not self.exact: e="LZW: no EOD code and the stream length is uncertain (%d bytes decoded)"%(len(d))
+                    if lz.note and not e: self.add_note("LZW: "+lz.note)
                 elif f in [b'/RunLengthDecode',b'/RL']: d=RunLengthDecode(d)
                 elif f in [b'/CCITTFaxDecode',b'/CCF',b'/JBIG2Decode',b'/JPXDecode',b'/DCTDecode',b'/DCT']:  # picture formats
                     break
@@ -680,6 +687,7 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
                 if d[e:e+9]==b'endstream':
                     stream=PDFStream(d[p:p+stream_len],filt,parms)
                     stream.pos,stream.endpos,stream.declared=p,e,declared
+                    stream.exact=True
                     objs.append(stream)
                     p=e
                     continue
