@@ -320,13 +320,13 @@ A javítás: a `self.startxref` a `base` korrekció után, közvetlenül az xref
 
 Egy 50 MB-os, több ezer rossz bejegyzésű fájlnál ez percekig tarthatott. Nem helyességi hiba volt, de a "megengedő, mindent feldolgoz" célnak ellentmondott.
 
-### 10.8 Kisebb észrevételek (nyitott)
+### 10.8 Kisebb észrevételek (lezárva)
 
-(A nem használt `deflate_complete` és `import base64` törölve: commit `900aeb0`. Az objstm-fejléc és a mély fejléc pontja a 10.10–10.11-be került.)
-
-- **`os.listdir`** (1667): nem létező útvonalnál a program a feldolgozás előtt kivétellel leáll; a könyvtár alkönyvtárait is fájlként próbálja megnyitni (kezelt kivétel, de zajos).
-- **`analyze_obj` /Launch**: `objs[i-2]` `i=1`-nél `objs[-1]`-re hivatkozik (ártalmatlan, de véletlen egyezést adhat).
-- **Kiírások mérete**: a `JSCR:` és az `embedded image` sorok a teljes adatot kiírják (több MB-os JS-nél zajos); a többi helyen már van `[:256]` levágás.
+- A nem használt `deflate_complete` és `import base64` törölve (commit `900aeb0`).
+- Az objstm-fejléc sorrendje és a mély fejléc a 10.10–10.11-be került (javítva).
+- **`analyze_obj` /Launch**: az `objs[i-2]` őrfeltételt kapott (commit `276030f`). Működési hibát nem okozott: az `analyze_obj` tokenlistája mindig `oid gen obj`-jal kezdődik, így az index legalább 2.
+- **Kiírások mérete**: a közvetlen `/JS` string és az `embedded image` kiírása is 256 byte-ra vágva (commit `1f3c4fa`); a `content` teljes marad.
+- **`os.listdir`** a parancssori indításban: nem létező útvonalnál kivétellel leáll. Nem javítjuk, csak tesztelésnél fut, jó paraméterrel.
 
 ### 10.9 LZW: `/EarlyChange 0` hamis „invalid code” hibák, hiányzó EOD kód hibaként – `LZWDecode`
 
