@@ -783,7 +783,8 @@ class PDFParser():
         self.pagenum=None
         self.objsnum=0
         self.uriobjid=-1
-        self.streamname="pdfstream.dat"
+        self.efnames={}     # csatolmany stream oid -> fajlnev (a Filespec /EF << /F 12 0 R >> hivatkozasa alapjan)
+        self.filestreams={} # csatolmany stream oid -> index a self.content-ben (a nevet a vegen kapja: name_files)
         # sorvege-serules (szoveges atvitel, pl. base64 nelkul kuldott email) felismeresehez:
         self.len_ok=0       # a /Length stimmel
         self.len_crlf=0     # hosszabb, legfeljebb annyival, ahany CRLF van benne  (LF -> CRLF)
@@ -940,6 +941,7 @@ class PDFParser():
         self.verify_xref_stm()
         self.resolve_js()
         self.resolve_launch()
+        self.name_files()
 
       except Exception:
         self.err("PDFparse-Exception!!! %s" % (traceback.format_exc()),10)
@@ -1237,8 +1239,8 @@ class PDFParser():
 
         if is_file:
             print("FILESTREAM.size=%d/%s"%(len(dd),str(top.get(b'/Length'))))
-            self.add_content(dd,self.streamname)
-            self.streamname="pdfstream.dat"
+            self.filestreams[oid]=len(self.content)
+            self.add_content(dd,"pdfstream.dat")
 
         if is_objstm and not self.encrypt: # ebben lehet /URI, /JS elrejtve...
             self.parse_objstm(oid,top,dd)
@@ -1496,16 +1498,21 @@ class PDFParser():
         if top.get(b'/Type')==b'/Filespec' or b'/UF' in top:
             self.fsobjs[oid]=[text_bytes(v.get()) for k,v in top.items() if k in (b'/F',b'/UF',b'/DOS',b'/Unix',b'/Mac') and type(v)==PDFString]
 
-        # find FIle attachment in object:
+        # find FIle attachment in object: a nev a /EF << /F 12 0 R /UF 12 0 R >> altal hivatkozott stream(ek)hez tartozik
+        # (a Filespec es a stream sorrendje a file-ban tetszoleges, tobb csatolmanynal a sorrend alapjan parositas rossz volt)
         if top.get(b'/Type')==b'/Filespec' and not self.encrypt:
             fn=top.get(b'/UF')
             if type(fn)!=PDFString: fn=top.get(b'/F')
             if type(fn)==PDFString:
                 print("FILESTREAM.name="+str(fn.get()))
-                self.streamname=decode_filename(fn.get())
-                if len(self.content)>0 and self.content[-1][1]=="pdfstream.dat":
-                    self.content[-1]=(self.content[-1][0],self.streamname) # hu de gany
-                    self.streamname="pdfstream.dat"
+                name=decode_filename(fn.get())
+                try:
+                    i=objs.index(b'/EF')+1
+                except ValueError:
+                    i=len(objs)
+                if i<len(objs) and objs[i]=='<':
+                    for k,v in objs_dict(objs,i).items():
+                        if type(v)==tuple and v[0]=='R': self.efnames[v[1]]=name   # a kesobbi (incremental update) gyoz
 
         # find Javascript (minden elofordulast, egy obj-ben tobb action is lehet)
         i=0
@@ -1567,6 +1574,11 @@ class PDFParser():
         if top.get(b'/Type')==b'/Page': self.pagecnt+=1
         if top.get(b'/Type')==b'/Pages' and type(top.get(b'/Count'))==int:
             if self.pagenum==None or top[b'/Count']>self.pagenum: self.pagenum=top[b'/Count']  # a gyoker /Pages-ben van a teljes szam
+
+    # a csatolmanyok nevenek beallitasa a Filespec /EF hivatkozasai alapjan (a Filespec nelkuli stream pdfstream.dat marad)
+    def name_files(self):
+        for oid,idx in self.filestreams.items():
+            if oid in self.efnames: self.content[idx]=(self.content[idx][0],self.efnames[oid])
 
     # a Launch action-ok hivatkozott /F filespec-jei: a benne levo nevek (/F /UF ...)
     def resolve_launch(self):
