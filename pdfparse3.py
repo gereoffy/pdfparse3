@@ -799,6 +799,8 @@ class PDFParser():
         self.objsnum=0
         self.uriobjid=-1
         self.efnames={}     # csatolmany stream oid -> fajlnev (a Filespec /EF << /F 12 0 R >> hivatkozasa alapjan)
+        self.efrefs={}      # /EF 39 0 R (hivatkozott EF dict) obj szama -> fajlnev, a vegen oldjuk fel (name_files)
+        self.efdicts={}     # EF dict obj szama -> [hivatkozott stream oid-k]  (csak /F /UF /DOS /Mac /Unix kulcsu dict-ek)
         self.filestreams={} # csatolmany stream oid -> index a self.content-ben (a nevet a vegen kapja: name_files)
         # sorvege-serules (szoveges atvitel, pl. base64 nelkul kuldott email) felismeresehez:
         self.len_ok=0       # a /Length stimmel
@@ -1546,13 +1548,21 @@ class PDFParser():
             if type(fn)==PDFString:
                 print("FILESTREAM.name="+str(fn.get()))
                 name=decode_filename(fn.get())
-                try:
-                    i=objs.index(b'/EF')+1
-                except ValueError:
-                    i=len(objs)
-                if i<len(objs) and objs[i]=='<':
-                    for k,v in objs_dict(objs,i).items():
-                        if type(v)==tuple and v[0]=='R': self.efnames[v[1]]=name   # a kesobbi (incremental update) gyoz
+                ef=top.get(b'/EF')
+                if type(ef)==tuple and ef[0]=='R':
+                    self.efrefs[ef[1]]=name   # /EF 39 0 R: kulon obj, a vegen (name_files) oldjuk fel az efdicts-bol
+                else:
+                    try:
+                        i=objs.index(b'/EF')+1
+                    except ValueError:
+                        i=len(objs)
+                    if i<len(objs) and objs[i]=='<':
+                        for k,v in objs_dict(objs,i).items():
+                            if type(v)==tuple and v[0]=='R': self.efnames[v[1]]=name   # a kesobbi (incremental update) gyoz
+        # onallo EF dict (a Filespec /EF 39 0 R hivatkozasanak celja): << /F 47 0 R /UF 47 0 R >>, csak ilyen kulcsokkal
+        if top and all(k in (b'/F',b'/UF',b'/DOS',b'/Mac',b'/Unix') for k in top):
+            refs=[v[1] for v in top.values() if type(v)==tuple and v[0]=='R']
+            if refs: self.efdicts[oid]=refs
 
         # find Javascript (minden elofordulast, egy obj-ben tobb action is lehet)
         i=0
@@ -1617,6 +1627,8 @@ class PDFParser():
 
     # a csatolmanyok nevenek beallitasa a Filespec /EF hivatkozasai alapjan (a Filespec nelkuli stream pdfstream.dat marad)
     def name_files(self):
+        for oid,name in self.efrefs.items():
+            for ref in self.efdicts.get(oid,[]): self.efnames.setdefault(ref,name)   # a kozvetlen /EF << >> elsobbseget kap
         for oid,idx in self.filestreams.items():
             if oid in self.efnames: self.content[idx]=(self.content[idx][0],self.efnames[oid])
 
