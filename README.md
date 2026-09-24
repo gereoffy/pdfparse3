@@ -128,7 +128,7 @@ Fontos részletek:
 - **Stream-adat kijelölése** a `stream` kulcsszó után:
   1. a `/Length` közvetlen értéke; ha `L` byte után (legfeljebb 8 whitespace-t átugorva) ott az `endstream`, a hossz jó, és a stream adataiban előforduló `endstream` szöveg sem zavar;
   2. különben az első `endstream` szövegig tart a stream (`d.find`), és a `/Length` eltérését hibaként jelzi (`STREAM: invalid length ...`); 1–3 byte rövidebb `/Length` (a záró sorvége) nem hiba;
-  3. hivatkozott `/Length` (`12 0 R`) esetén a `lenref` visszahívás (`PDFParser.resolve_length`, 1324. sor) az `obj_starts()` gyorsítótárból megkeresi a `N G obj <szám> endobj` objektumot (az utolsó előfordulást), és a kapott hosszat az 1. pont szerint, csak `endstream`-mel megerősítve használja; ha nincs ilyen obj vagy a hossz nem stimmel, az `endstream` keresése dönt;
+  3. hivatkozott `/Length` (`12 0 R`) esetén a `lenref` visszahívás (`PDFParser.resolve_length`) először az xref szerinti helyen keresi a `N G obj <szám> endobj` objektumot (gyors, az obj-számot ellenőrzi), és csak ha ott nincs meg, az `obj_starts()` teljes-fájl térképéből (az utolsó előfordulást); a kapott hosszat az 1. pont szerint, csak `endstream`-mel megerősítve használja; ha nincs ilyen obj vagy a hossz nem stimmel, az `endstream` keresése dönt;
   4. ha nincs `endstream`, de a `/Length` a fájlba fér, azt használja (hiba); egyébként hiba, és a stream-adatot tokenként olvassa tovább.
   
   A `PDFStream` objektumba a nyers adat, a `/Filter` lista, a `/DecodeParms` és a pozíciók (`pos`, `endpos`, `declared`) kerülnek; ez utóbbiak a sorvége-sérülés felismeréséhez kellenek.
@@ -190,7 +190,7 @@ Minden bejegyzésre megnézi, hogy az offseten (max. 4 whitespace-t megengedve) 
 
 ### 6.3 Bejárás: `walk_xref` vs. `scan_objs`
 
-- `walk_xref` (962): csak validate módban, ha az xref legfeljebb felerészben rossz és a fájl nem csonka. A rossz offsetű obj-eket az `obj_starts()` gyorsítótárból keresi meg (az utolsó előfordulást). Az `endobj` nélküli obj-eket egy összesített hibával jelzi.
+- `walk_xref` (962): csak validate módban, ha az xref legfeljebb felerészben rossz és a fájl nem csonka. A rossz offsetű obj-eket az `obj_starts()` gyorsítótárból keresi meg (az utolsó előfordulást); a térképet csak akkor építi fel, ha van rossz bejegyzés. Az `endobj` nélküli obj-eket egy összesített hibával jelzi.
 - `scan_objs` (982): lineáris végigolvasás a fejléctől. Az első obj előtti szemetet átugorja (első 1 KB-on belül), az obj-ok közti szemétnél az `N G obj`-ra szinkronizál (hiba). A `%%EOF` utáni régi PDF-maradékban (`leftover`) a hibákat nem számolja (`quiet`), de a tartalmat kinyeri.
 
 `process_obj` (1015) tölti a `dom[oid] = (kezdet, vég)` térképet (a későbbi előfordulás felülírja, mint az incremental update-nél), majd `parse_stream` és `analyze_obj`.
@@ -340,7 +340,7 @@ A javítás: a `LZWDecode` `early` paramétert kap a stream `/DecodeParms`-ábó
 
 > **Javítva**: commit `3d8fde8`. Teszt: `samples_new/09_objstm_unsorted_header.pdf`.
 
-Az object stream fejlécének `oid offset` párjait a kód offset szerint növekvőnek feltételezte: a k-adik obj vége a k+1-edik pár offsetje volt. A specifikáció a sorrendet nem írja elő. Fordított sorrendnél a következő pár offsetje kisebb, ezért hamis „invalid offset” hiba lett és az obj kimaradt; nagyobb ugrásnál több obj olvadt egy tokenlistába, és az `analyze_obj` az egyik obj `/JS`-ét vagy `/Type /Page`-ét a másik számához kötötte. Kísérlet: ugyanaz a két oldal-obj a fejléc két sorrendjével 2, ill. 1 oldalt és egy hamis hibát adott.
+Az object stream fejlécének `oid offset` párjait a kód offset szerint növekvőnek feltételezte: a k-adik obj vége a k+1-edik pár offsetje volt. A specifikáció (ISO 32000-1, 7.5.7) valóban növekvő sorrendet ír elő, tehát a rendezetlen fejléc szabálysértő, de a tűrő feldolgozás a „megengedő” célnak és a biztonsági vizsgálatnak is megfelel (egy szándékosan rendezetlen fejléccel nem lehet objektumot elrejteni). Fordított sorrendnél a következő pár offsetje kisebb, ezért hamis „invalid offset” hiba lett és az obj kimaradt; nagyobb ugrásnál több obj olvadt egy tokenlistába, és az `analyze_obj` az egyik obj `/JS`-ét vagy `/Type /Page`-ét a másik számához kötötte. Kísérlet: ugyanaz a két oldal-obj a fejléc két sorrendjével 2, ill. 1 oldalt és egy hamis hibát adott.
 
 A javítás: a határ a rákövetkező, offset szerint nagyobb obj kezdete (rendezett offsethalmaz), az utolsóé az adat vége.
 
