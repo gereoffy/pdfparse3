@@ -717,6 +717,7 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
 # jegyu szamsor, azon a korlatlan \d+ negyzetes ideju lenne)
 re_objstart=re.compile(rb'(?<![0-9])(\d{1,10})[\x00\t\n\x0c\r ]{1,32}(\d{1,10})[\x00\t\n\x0c\r ]{1,32}obj')
 re_xreftype=re.compile(rb'/Type[\x00\t\n\x0c\r ]*/XRef\b')
+re_xrefkw=re.compile(rb'(?<![a-zA-Z])xref(?![a-zA-Z])')   # az 'xref' kulcsszo (a 'startxref' belseje nem!)
 # egy csak szamot tartalmazo obj ("12 0 obj 4567 endobj"): a hivatkozott /Length feloldasahoz
 re_lenobj=re.compile(rb'\d{1,10}[\x00\t\n\x0c\r ]{1,32}\d{1,10}[\x00\t\n\x0c\r ]{1,32}obj[\x00\t\n\x0c\r ]*(\d{1,10})[\x00\t\n\x0c\r ]*endobj')
 # a %PDF header elotti szemet tipusa
@@ -913,7 +914,7 @@ class PDFParser():
                 # parse it!
                 if o<p or o>=oend:
                     # invalid offset, find xref...
-                    o2=d.rfind(b'xref',p,oend) # a header vege es a startxref kezdte kozott keresunk visszafele...
+                    o2=self.rfind_xref(p,oend) # a header vege es a startxref kezdte kozott keresunk visszafele...
                     if o>=0: self.err('XREF: invalid startxref offset %d, xref found at %d'%(o,o2))
                     else: print('XREF: trying xref found at %d'%(o2))   # (a hibat mar szamoltuk)
                     o=o2
@@ -1031,6 +1032,13 @@ class PDFParser():
                 self.err("INVALID object type: "+str(objs[0]))
 
 
+    # az utolso 'xref' kulcsszo pozicioja a [start,end) tartomanyban, -1 ha nincs. (A sima rfind a korabbi szekciok
+    # 'startxref' szavaban is talalt, ha az utolso szekcio xref stream, ASCII 'xref' nelkul.)
+    def rfind_xref(self,start,end):
+        x=-1
+        for m in re_xrefkw.finditer(self.d,max(0,start),end): x=m.start()
+        return x
+
     # kezdodik-e xref szekcio (ASCII tabla vagy xref stream obj) az 'o' pozicion?
     def section_at(self,o):
         d=self.d
@@ -1072,7 +1080,7 @@ class PDFParser():
                 self.err("XREF: invalid xref section at %d: %s"%(o,str(objs[:5])))
                 if len(seen)==1:
                     # a startxref rossz helyre mutat: keressuk meg az utolso xref-et visszafele
-                    o2=self.d.rfind(b'xref',0,oend)
+                    o2=self.rfind_xref(0,oend)
                     if o2>=0 and not o2 in seen:
                         print('XREF: trying xref found at %d'%(o2))
                         todo.append((o2,end))
@@ -1292,7 +1300,7 @@ class PDFParser():
     # hol van valojaban az utolso xref szekcio (ASCII 'xref' vagy /Type /XRef obj), a startxref elott?
     def find_last_xref(self,oend):
         d=self.d
-        x=d.rfind(b'xref',0,oend)
+        x=self.rfind_xref(0,oend)
         start=max(0,oend-65536)
         m=None
         for m in re_xreftype.finditer(d,start,oend): pass
