@@ -873,7 +873,6 @@ class PDFParser():
                 q=o
                 o=-1
             try:
-                if o>=0: self.startxref=(o,oend)
                 while q<pend and d[q]<=32: q+=1 # skip whitespace
                 if d[q:q+5]==b'%%EOF':
                     if pend>q+7 and re_structure.search(d,q+5):
@@ -911,6 +910,8 @@ class PDFParser():
                         self.err("JUNK: %d bytes before the %%PDF header (%s), offsets are relative to the header"%(hdr,kind))
                     else:
                         print("JUNK: %d bytes before the %%PDF header (%s)"%(hdr,kind))
+                # (a base korrekcio utan: a check_transfer a find_last_xref abszolut poziciojaval hasonlitja ossze)
+                if o>=0: self.startxref=(o,oend)
                 # parse it!
                 if o<p or o>=oend:
                     # invalid offset, find xref...
