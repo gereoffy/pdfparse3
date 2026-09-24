@@ -595,7 +595,8 @@ def objs_decodeparms(objs):
 NULLCHUNKS=[b' null'*4096,b' null'*64,b' null']
 re_nullrun=re.compile(rb'(?:[\x00\t\n\x0c\r ]+(?:null|true|false)(?![^\x00\t\n\x0c\r ()<>\[\]{}/%]))+')
 
-def parse_pdf_obj(d,p,pend,stop=None,err=print_err):
+# lenref(oid,gen): a hivatkozott /Length obj erteke (int) vagy None (l. PDFParser.resolve_length)
+def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
     pend=min(pend,len(d))
     objs=[]
     starts=[]   # a tokenek kezdete (elotte whitespace lehet)
@@ -645,6 +646,15 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err):
                 if fi+3<len(objs) and objs[fi+3]==b'R': stream_len=-stream_len # referenced object
             except Exception:
                 pass
+            if stream_len<0 and lenref:
+                # hivatkozott /Length ("12 0 R"): feloldjuk. Csak akkor hasznaljuk (lent), ha a hossz utan tenyleg
+                # endstream all, igy a rossz feloldas nem art. Nelkule az elso 'endstream' szoveg dontene, ami a
+                # tomoritetlen csatolmanyt (pl. beagyazott pdf) a benne levo 'endstream'-nel elvagna.
+                try:
+                    L=lenref(-stream_len,int(objs[fi+2]))
+                    if type(L)==int and L>0: stream_len=L
+                except Exception:
+                    pass
             declared=stream_len if stream_len>0 else None
             filt=objs_value(objs,b'/Filter')
             parms=objs_decodeparms(objs)
@@ -707,6 +717,8 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err):
 # jegyu szamsor, azon a korlatlan \d+ negyzetes ideju lenne)
 re_objstart=re.compile(rb'(?<![0-9])(\d{1,10})[\x00\t\n\x0c\r ]{1,32}(\d{1,10})[\x00\t\n\x0c\r ]{1,32}obj')
 re_xreftype=re.compile(rb'/Type[\x00\t\n\x0c\r ]*/XRef\b')
+# egy csak szamot tartalmazo obj ("12 0 obj 4567 endobj"): a hivatkozott /Length feloldasahoz
+re_lenobj=re.compile(rb'\d{1,10}[\x00\t\n\x0c\r ]{1,32}\d{1,10}[\x00\t\n\x0c\r ]{1,32}obj[\x00\t\n\x0c\r ]*(\d{1,10})[\x00\t\n\x0c\r ]*endobj')
 # a %PDF header elotti szemet tipusa
 def junk_kind(j):
     if j[:3]==b'\xef\xbb\xbf': return 'UTF-8 BOM'
@@ -955,7 +967,7 @@ class PDFParser():
             else: xref[oid]=(pos,xref[oid][1])
         noend=[]
         for oid,(pos,gen) in sorted(xref.items(),key=lambda x:x[1][0]):
-            p,objs,stream=parse_pdf_obj(self.d,pos,pend,stop=b'endobj',err=self.err)
+            p,objs,stream=parse_pdf_obj(self.d,pos,pend,stop=b'endobj',err=self.err,lenref=self.resolve_length)
             if self.debug: print(objs)
             if not objs or objs[-1]!=b'endobj': noend.append(oid)
             self.process_obj(objs,stream,pos,p)
@@ -981,7 +993,7 @@ class PDFParser():
             # a %%EOF utani regi adat maradekat is feldolgozzuk (tartalom), de a hibait nem szamoljuk (JUNK)
             self.quiet=self.leftover!=None and objp>=self.leftover
 
-            p,objs,stream=parse_pdf_obj(d,p,pend,stop=b'endobj',err=self.err)
+            p,objs,stream=parse_pdf_obj(d,p,pend,stop=b'endobj',err=self.err,lenref=self.resolve_length)
             if not objs: break # EOF
             if self.debug: print(objs)
 
@@ -1035,7 +1047,7 @@ class PDFParser():
                 if self.debug: print("XREF: section at %d already parsed"%(o))
                 continue
             seen.add(o)
-            q,objs,stream=parse_pdf_obj(self.d,o,end,stop=b'endobj',err=self.err)
+            q,objs,stream=parse_pdf_obj(self.d,o,end,stop=b'endobj',err=self.err,lenref=self.resolve_length)
             if self.debug: print("XREF: "+str(objs))
             if not objs:
                 self.err("XREF: empty xref section at %d"%(o))
@@ -1296,6 +1308,14 @@ class PDFParser():
     #  - az xref bejegyzesek ugyanigy csusznak el (a file-ban elorehaladva monoton novekvo mertekben)
     # A visszaalakitas nem megbizhato (a binaris adatban eredetileg is lehet 0D 0A), ezert csak jelezzuk.
     # a file-ban talalhato obj fejlecek: (oid,gen) -> [poziciok]
+    # a hivatkozott /Length ("12 0 R") erteke: a fajlban levo "12 0 obj <szam> endobj" (az utolso elofordulas,
+    # incremental update-nel az ervenyes; a rossz ertek nem art, mert csak endstream-mel megerositve hasznaljuk)
+    def resolve_length(self,oid,gen):
+        for pos in reversed(self.obj_starts().get((oid,gen),[])):
+            m=re_lenobj.match(self.d,pos)
+            if m: return int(m.group(1))
+        return None
+
     def obj_starts(self):
         if self._starts==None:
             self._starts={}
@@ -1557,7 +1577,7 @@ class PDFParser():
                 elif oid in self.strobjs: parts.append(text_bytes(self.strobjs[oid]))
                 elif oid in self.dom:
                     objp,end=self.dom[oid]
-                    q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj')
+                    q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',lenref=self.resolve_length)
                     parts+=[text_bytes(t.get()) for t in objs if type(t)==PDFString]
                 else: parts.append(b'(obj #%d not found)'%(oid))
             t=b' '.join(parts)
@@ -1571,7 +1591,7 @@ class PDFParser():
                 js=self.strobjs[oid]
             elif oid in self.dom:
                 objp,end=self.dom[oid]
-                q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj')
+                q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',lenref=self.resolve_length)
                 if stream:
                     js=bytes(stream.decode(predictor=True))  # a dekodolasi hibat mar szamoltuk
                 else:
