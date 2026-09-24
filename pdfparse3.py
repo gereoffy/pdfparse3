@@ -35,11 +35,14 @@ def print_err(msg,n=1):
     print(msg)
 
 # based on https://github.com/py-pdf/pypdf/blob/main/pypdf/filters.py
+# early: a /DecodeParms /EarlyChange erteke (alap 1): a kodszelesseg egy koddal korabban (1) vagy pontosan a
+# szotar megtelesekor (0) no. Rossz ertekkel a 511./512. kod utan "invalid code" hiba jon.
 class LZWDecode:
-        def __init__(self, data: bytes) -> None:
+        def __init__(self, data: bytes, early: int = 1) -> None:
             self.STOP = 257
             self.CLEARDICT = 256
             self.data = data
+            self.early = 1 if early not in (0,1) else early
             self.error = None
             self.note = None
             self.bytepos = 0
@@ -110,7 +113,7 @@ class LZWDecode:
                         self.error = "invalid code %d (dict size %d)"%(cW,self.dictlen)
                         break
                     if (
-                        self.dictlen >= (1 << self.bitspercode) - 1
+                        self.dictlen + self.early >= (1 << self.bitspercode)
                         and self.bitspercode < 12
                     ):
                         self.bitspercode += 1
@@ -344,7 +347,7 @@ class PDFStream():
                     d,e,n=inflate(d)
                     self.add_note(n)
                 elif f in [b'/LZWDecode',b'/LZW']:
-                    lz=LZWDecode(d)
+                    lz=LZWDecode(d,(self.parms or {}).get(b'/EarlyChange',1))
                     d=lz.decode()
                     if lz.error: e="LZW: "+lz.error
                     if lz.note: self.add_note("LZW: "+lz.note)
