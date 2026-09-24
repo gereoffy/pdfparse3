@@ -641,7 +641,7 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
                 err("Xref: INVALID offset format")
 
         # handle embedded image:
-        if data in [b'ID',b'BI',b'EI']: print("STREAM: embedded image !!! "+str(objs))
+        if data in [b'ID',b'BI',b'EI']: print("STREAM: embedded image !!! %d tokens: %s"%(len(objs),str(objs)[:256]))
 #        if data==b'ID' and b'BI' in objs:
 
         # handle embedded stream:
@@ -1579,7 +1579,7 @@ class PDFParser():
                 self.jsrefs[js]=True  # a hivatkozott obj-et a vegen keressuk meg
                 continue
             if type(js)==PDFString: js=js.get()
-            print("JSCR: "+str(js))
+            print("JSCR: %d bytes: %s"%(len(js) if type(js)==bytes else 0,str(js)[:256]))   # (a content-be a teljes JS kerul)
             if type(js)==bytes: self.add_content(js,"pdfstream.js")
 
         # Launch action (program / file inditasa): a celjat (/F file, /Win /F /P parameterek...) kinyerjuk, mint a JS-t.
