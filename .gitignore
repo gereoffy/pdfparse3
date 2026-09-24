@@ -1,0 +1,7 @@
+# SOHA NE KERULJON GIT-BE: valos, szemelyes adatokat tartalmazo pdf-ek, csak helyi teszteleshez!
+samples_private/
+samples_private
+
+# python
+__pycache__/
+*.pyc
