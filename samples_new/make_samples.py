@@ -156,3 +156,14 @@ write('11c_lf_text_bad_startxref.pdf',d)
 d,_,_=build(BASE,comment=b'%comment',eol=b'\r\n')
 junk=b'Content-Type: application/pdf\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
 write('11d_crlf_junk_lf_damaged_body.pdf',junk+d.replace(b'\r\n',b'\n'))
+
+# 11e: CRLF sorvegu szoveges pdf CRLF -> LF serulessel, es a %%EOF utan binaris farok (nulla padding + szemet). Az
+#     eol_repair csak a headertol az utolso startxref %%EOF-jaig vizsgal es javit, a farok nem szamit binarisnak es
+#     valtozatlan marad: visszaalakitja, TRANSFER + a padding/szemet kiirasa marad.
+d,_,_=build(BASE,comment=b'%comment',eol=b'\r\n')
+write('11e_lf_damaged_body_binary_tail.pdf',d.replace(b'\r\n',b'\n')+b'\x00'*100+bytes(range(1,32))+b'\x00'*100)
+
+# 11f: mint a 11e, de a %%EOF hianyzik, es rogton a startxref erteke utan jon a nulla padding: a vizsgalt resz a
+#     startxref soraig tart, a javitas megtortenik, a "missing EOF" hiba (5) jogosan marad.
+d,_,_=build(BASE,comment=b'%comment',eol=b'\r\n',eof=False)
+write('11f_lf_damaged_body_no_eof_zero_tail.pdf',d.replace(b'\r\n',b'\n')+b'\x00'*200)

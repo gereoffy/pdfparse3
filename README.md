@@ -79,9 +79,9 @@ A `TRANSFER`, `GAP`, `TRUNCATED` és a `%%EOF` utáni maradék (`JUNK ... leftov
 ```
 fejléc keresése (%PDF- / %FDF-, első 1024 byte, majd bárhol)
   └─ a fejléc-sor és a bináris komment átugrása, binheader megjegyzése
-eol_repair – rögtön a fejléc után: ha a startxref nem xref-szekcióra mutat, és a fejléctől kezdődő rész
-  szöveges, egynemű sorvégekkel, a sorvégek visszaalakítása; ha így már jó helyre mutat, innentől a javított
-  adat a self.d (a fejléc előtti szemét változatlan marad)
+eol_repair – rögtön a fejléc után: ha a startxref nem xref-szekcióra mutat, és a fejléctől a %%EOF-ig tartó
+  rész szöveges, egynemű sorvégekkel, a sorvégek visszaalakítása; ha így már jó helyre mutat, innentől a
+  javított adat a self.d (a fejléc előtti szemét és a %%EOF utáni farok változatlan marad)
 startxref megkeresése a fájl végéről (rfind)
   ├─ offset beolvasása, %%EOF ellenőrzése
   ├─ a %%EOF utáni rész osztályozása: obj-ek (csonka), HTML, nulla-padding, szemét → pend levágása
@@ -231,7 +231,7 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 |---|---|---|
 | `TRUNCATED: ...` | `check_truncated` (1430) | Félbeszakadt letöltés/másolás: nullákkal kitöltött vége, vagy PDF-szerkezet az utolsó `%%EOF` után (pl. linearizált fájlból csak az első oldal szekciója teljes). Ha viszont az EOF előtti dokumentum teljes (jó xref) és az EOF utáni maradék nem obj-határon kezdődik, az régi/másik fájl maradéka: `JUNK ... leftover` (súly 1). A `startxref N`-nel végződő, csak `%%EOF`-hiányos fájl nem csonka. |
 | `TRANSFER: LF -> CRLF / CRLF -> LF ...` | `check_transfer` (1388), `check_xref_shift` (a sorvégeket a `counts_upto` egy menetben számolja), `check_stream_length`, `find_last_xref` | Szöveges módú átvitel (base64 nélküli e-mail, ASCII FTP): a streamek hossza pont a bennük levő sorvégek számával tér el a `/Length`-től, a `startxref` és az xref-bejegyzések monoton növekvő mértékben csúsznak. Több egybehangzó jel kell, az ellentmondó jelek elnyomják. |
-| `TRANSFER: ... text only file, N line endings reverted (parsed the repaired data)` | `eol_repair` (a `parse()` elején, a fejléc után) | **Visszaalakítás**, ha egyértelmű: a `startxref` nem xref-szekcióra mutat (sem a fejléchez relatívan, sem abszolút), a `%PDF` fejléctől kezdődő részben nincs bináris byte (32 alatt csak TAB, LF, CR), és a sorvégek egyneműek (csak LF → LF→CRLF-fel próbál, azaz CRLF→LF sérülés; mind CRLF → CRLF→LF-fel, azaz LF→CRLF sérülés). A fejléc előtti szemetet nem vizsgálja és nem is bántja, így egy CRLF-es levelezőfejléc nem zavar. Csak akkor fogadja el, ha a visszaalakított adatban a `startxref` xref-szekcióra mutat; ilyenkor az elemzés a javított adattal folytatódik, a hamis xref- és stream-hibák nem is keletkeznek, csak ez a 10-es súlyú üzenet marad. Kevert sorvégeknél vagy bináris adatnál nem kísérletezik, mert a 0D 0A eredetileg is lehetett az adatban; ott a `check_transfer` jelez. |
+| `TRANSFER: ... text only file, N line endings reverted (parsed the repaired data)` | `eol_repair` (a `parse()` elején, a fejléc után) | **Visszaalakítás**, ha egyértelmű: a `startxref` nem xref-szekcióra mutat (sem a fejléchez relatívan, sem abszolút), a `%PDF` fejléctől az utolsó `startxref` soráig (és a közvetlenül utána álló `%%EOF`-ig, ha van) tartó részben nincs bináris byte (32 alatt csak TAB, LF, CR), és a sorvégek egyneműek (csak LF → LF→CRLF-fel próbál, azaz CRLF→LF sérülés; mind CRLF → CRLF→LF-fel, azaz LF→CRLF sérülés). A fejléc előtti szemetet és a `%%EOF` utáni farkat (nulla-padding, HTML, más fájl maradéka) nem vizsgálja és nem is bántja, így egy CRLF-es levelezőfejléc vagy egy bináris farok nem zavar. Csak akkor fogadja el, ha a visszaalakított adatban a `startxref` xref-szekcióra mutat; ilyenkor az elemzés a javított adattal folytatódik, a hamis xref- és stream-hibák nem is keletkeznek, csak ez a 10-es súlyú üzenet marad. Kevert sorvégeknél vagy bináris adatnál nem kísérletezik, mert a 0D 0A eredetileg is lehetett az adatban; ott a `check_transfer` jelez. |
 | `GAP: N bytes missing/inserted inside the stream at offset ...` | `check_gap` (1260) | Minden rossz xref-bejegyzés **ugyanannyival** csúszik, és egy korábbi stream hossza pont ennyivel tér el: sérült másolás egy stream belsejében. |
 | `JUNK: N bytes before the %PDF header (...)` | `junk_kind` (724) | UTF-8 BOM, RTFD, ZIP, OLE2, RTF, MacBinary, HTML, MIME-fejlécek, szöveg vagy bináris a fejléc előtt. Ha az offsetek a fejléchez relatívak, `base` beállítása. |
 | `JUNK: N bytes after %%EOF (HTML)` | `parse` | HTML a PDF után (poliglott fájl); tartalomként is kiadja. |
@@ -377,6 +377,8 @@ A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tar
 | `../samples/lf_text_ok.pdf`, `../samples/lf_text_crlf.pdf` | (a `samples/`-ben, a másik repóval szinkronban) csak-LF szöveges PDF és LF→CRLF-sérült változata: az `eol_repair` visszaalakítja, csak a TRANSFER marad (8. fejezet) |
 | `11c_lf_text_bad_startxref.pdf` | negatív teszt: csak-LF szöveges PDF más okból rossz `startxref`-fel: nem alakítja vissza, a szokásos `invalid startxref offset` hiba marad |
 | `11d_crlf_junk_lf_damaged_body.pdf` | CRLF-es levelezőfejléc a `%PDF` előtt + CRLF→LF-sérült törzs: a fejléctől vizsgálva visszaalakítja, TRANSFER + JUNK marad (az egész fájlt nézve kevert sorvégek lennének) |
+| `11e_lf_damaged_body_binary_tail.pdf` | CRLF→LF-sérült törzs + bináris farok a `%%EOF` után (nulla-padding, szemét): a farkat nem vizsgálja, visszaalakítja, csak a TRANSFER marad |
+| `11f_lf_damaged_body_no_eof_zero_tail.pdf` | mint a 11e, de nincs `%%EOF`, a `startxref` értéke után rögtön nulla-padding: a vizsgált rész a `startxref` soráig tart, visszaalakítja, a `missing EOF` hiba marad |
 | `08_lzw_earlychange0_no_eod.pdf` (+ `08_payload.bin`) | három LZW csatolmány (10.9): `/EarlyChange 0` záró kód nélkül és alap EarlyChange záró kóddal (byte-ra egyeznek a payloaddal, a hiányzó EOD megjegyzés), valamint záró kód nélkül feloldhatatlan `/Length 99 0 R`-rel: ez az egyetlen hiba |
 
 - `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül.
