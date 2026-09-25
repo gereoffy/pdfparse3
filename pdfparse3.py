@@ -1461,8 +1461,9 @@ class PDFParser():
         self.errors.insert(0,(10,msg))
 
     # a sorvege-serules visszaalakitasa, ha egyertelmu: a startxref nem ervenyes szakaszra mutat (sem a headerhez relativan,
-    # sem abszolut), es a %PDF headertol kezdodo reszben (hdr: a header pozicioja; az elotte levo szemetet nem nezzuk es
-    # nem is bantjuk) nincs binaris adat (32 alatti byte csak TAB, LF, CR), es
+    # sem abszolut), es a %PDF headertol az utolso startxref %%EOF-jaig tarto reszben (hdr: a header pozicioja; az elotte
+    # levo szemetet es a %%EOF utani farkat -- nulla padding, html, mas file maradeka -- nem nezzuk es nem is bantjuk)
+    # nincs binaris adat (32 alatti byte csak TAB, LF, CR), es
     #  - nincs benne CR, csak LF: LF -> CRLF visszaalakitassal probalkozunk (CRLF -> LF serules)
     #  - pontosan annyi CR van, ahany LF, es mind CRLF par: CRLF -> LF visszaalakitassal (LF -> CRLF serules)
     # Mas esetben (kevert sorvegek, binaris adat) nem kiserletezunk, a check_transfer jelzi a serulest.
@@ -1475,7 +1476,11 @@ class PDFParser():
         if not m: return None
         o=int(m.group(1))
         if self.section_at(hdr+o) or self.section_at(o): return None   # a startxref jo, nincs mit javitani
-        body=d[hdr:]
+        # a vizsgalt (es javitott) resz vege: a startxref sora, es ha kozvetlenul utana ott a %%EOF (nem mindig van!),
+        # az is a sorvegevel. (NUL nem szamit whitespace-nek: hianyzo %%EOF + nulla padding eseten az mar a farok)
+        e=q+m.end()
+        e+=re.match(rb'[\t\n\r ]*(?:%%EOF)?(?:\r\n|\r|\n)?',d[e:e+32]).end()
+        body=d[hdr:e]
         if len(body.translate(None,NOT_CTRL)): return None   # binaris adat: 0D 0A eredetileg is lehetett benne
         cr=body.count(b'\r')
         lf=body.count(b'\n')
@@ -1485,7 +1490,7 @@ class PDFParser():
             kind,cnt,body="LF -> CRLF",cr,body.replace(b'\r\n',b'\n')
         else:
             return None
-        fixed=d[:hdr]+body
+        fixed=d[:hdr]+body+d[e:]   # (a header elotti szemet es a farok valtozatlan)
         if self.section_at(hdr+o,fixed) or self.section_at(o,fixed): return kind,cnt,fixed
         return None
 
