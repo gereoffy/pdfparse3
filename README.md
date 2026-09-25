@@ -28,7 +28,7 @@ content, errcnt, errors = parse_pdf(data, debug=False, validate=False)
 | `debug` | bool | részletes kiírás (tokenek, xref-tábla, DOM) |
 | `validate` | bool | csak ellenőrzés: a kinyert adat helyett `None` kerül a `content`-be, és lehetőség szerint csak az xref által mutatott objektumokat járja be |
 | `content` | `[(data, filename), ...]` | a kinyert tartalmak; `filename` a 2.3 szerinti név |
-| `errcnt` | int | a hibák súlyainak összege |
+| `errcnt` | int | a hibalista **pontszáma** (`score()`): a sérülést jelző, 10-es súlyú hibák összege, plusz a figyelmeztetések összege legfeljebb 9-ig. Jelentése: 0 = hibátlan, 1–9 = nem szabványos, de használható, ≥10 = sérült (2.4) |
 | `errors` | `[(súly, üzenet), ...]` | az egyes hibák |
 
 Ha a fájl nem PDF (nincs benne `%PDF-` vagy `%FDF-` fejléc): `(None, 99, [(99, "not pdf")])`.
@@ -62,17 +62,19 @@ A program a futása közben **sok mindent kiír a stdout-ra** (a `print` hívás
 | `pdfstream.html` | a `%PDF` fejléc előtti vagy a `%%EOF` utáni HTML |
 | `pdfstream.launch` | Launch action célja: a `/F`, `/Win`, `/Unix`, `/Mac`, `/P`, `/D`, `/O` értékek szóközzel összefűzve |
 
-### 2.4 Hibasúlyok
+### 2.4 Hibasúlyok és pontozás
+
+Két osztály van. A **sérülés** (`DAMAGE` = 10 súly) azt jelenti, hogy a fájl tartalma vagy szerkezete ténylegesen sérült, és a népszerű megjelenítők (Chrome/PDFium, Acrobat, Preview) jellemzően nem nyitják meg. A **figyelmeztetés** (1–5 súly) nem szabványos, de használható fájlt jelez (hibás író program, szemét a `%%EOF` után stb.). A pontszám (`score()`): a sérülések összege + a figyelmeztetések összege, ez utóbbi legfeljebb `WARN_MAX` = 9. Így 0 = hibátlan, 1–9 = nem szabványos, ≥10 = sérült; a küszöb a megjelenítőkkel való ellenőrzés alapján lett kalibrálva (2026-09-25).
 
 | Súly | Mikor |
 |---|---|
-| 1 | alapértelmezett (szintaktikai hiba, rossz stream-hossz, dekódolási hiba, egyedi xref-hiba, JUNK a fejléc előtt, `%%EOF` utáni régi PDF-maradék stb.) |
-| 2 | tömegesen rossz xref-tábla (minden bejegyzés egy offsetre mutat, elszámozott tábla, rossz pozíciók) |
-| 5 | hiányzó `%%EOF` |
-| 10 | súlyos szerkezeti hiba: nincs `startxref`, kivétel az xref feldolgozásában, érvénytelen/dekódolhatatlan bináris xref, `TRUNCATED`, `TRANSFER`, `GAP`, belső kivétel (`PDFparse-Exception`) |
+| 1 | alapértelmezett figyelmeztetés: szintaktikai hiba, rossz stream-hossz, dekódolási hiba (ideértve az író program adler32-hibáját, l. 5.1), egyedi xref-hiba, `%%EOF` utáni régi PDF-maradék stb. |
+| 2 | tömegesen rossz xref-tábla (minden bejegyzés egy offsetre mutat, elszámozott tábla, rossz pozíciók); nincs `startxref`; érvénytelen vagy dekódolhatatlan bináris xref (a csonkolást a `TRUNCATED` jelzi külön) |
+| 5 | hiányzó `%%EOF`; `TRANSFER`, ha a tartalom nem sérült (visszaalakított sorvégek, csak szöveges fájl, vagy a streameket a konverzió nem érte el) |
+| 10 (`DAMAGE`) | `TRUNCATED`, `GAP`, `CORRUPT` (sérült tömörített adat), `ENCODED` (dekódolatlan quoted-printable), `TRANSFER` sérült stream-adattal, `JUNK` a fejléc előtt, ha az offsetek a fejléchez relatívak (a PDF utólag került a szemét mögé), felülírt fájl régi xref-fel a végén, kivétel az xref feldolgozásában, belső kivétel (`PDFparse-Exception`) |
 | 99 | nem PDF |
 
-A `TRANSFER`, `GAP`, `TRUNCATED` és a `%%EOF` utáni maradék (`JUNK ... leftover`) üzenetek a lista **elejére** kerülnek (`errors.insert(0, ...)`), mert ezek magyarázzák a többi hibát.
+A `TRANSFER`, `GAP`, `TRUNCATED`, `CORRUPT`, `ENCODED` és a `JUNK`-magyarázatok a lista **elejére** kerülnek (`errors.insert(0, ...)`), mert ezek magyarázzák a többi hibát.
 
 ## 3. A feldolgozás menete (`PDFParser.parse`, 813. sor)
 
@@ -166,7 +168,7 @@ A cél: úgy viselkedni, mint a PDF-olvasók, de a **valódi adatsérülést** h
 2. Normál zlib-kibontás 4 KB-os darabokban (hiba esetén a hibáig kibontott rész megmarad). Ha végigért, kész.
 3. Ha nem: nyers deflate (32 K ablak) a zlib-fejléc nélkül, és az Adler-32 ellenőrzőösszeg **kézi** ellenőrzése:
    - hiányzó/csonka checksum → megjegyzés (valid fájlokban is előfordul, az olvasók nem ellenőrzik);
-   - checksum-eltérés → **hiba** (adatsérülés gyanúja, a deflate-nek nincs más ellenőrzése);
+   - checksum-eltérés → **hiba** (adatsérülés gyanúja, a deflate-nek nincs más ellenőrzése); a `CORRUPT` diagnózis ebből számol. Kivétel: ha az adler32 felső 16 bitje (a futó összeg) stimmel, és csak az alsó fele rossz, az az író program checksum-hibája, az adat jó (Acrobat-tal ellenőrizve, pl. BCL easyPDF): 1-es súlyú figyelmeztetés, nem sérülés;
    - túl kicsi ablakméret a fejlécben (`invalid distance too far back`), de 32 K-val jó → megjegyzés;
    - zlib-fejléc nélküli nyers deflate → megjegyzés;
    - `00 00 FF FF` a végén (sync flush, nem lezárt folyam) → megjegyzés.
@@ -229,8 +231,11 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 
 | Üzenet | Függvény | Mit ismer fel |
 |---|---|---|
-| `TRUNCATED: ...` | `check_truncated` (1430) | Félbeszakadt letöltés/másolás: nullákkal kitöltött vége, vagy PDF-szerkezet az utolsó `%%EOF` után (pl. linearizált fájlból csak az első oldal szekciója teljes). Ha viszont az EOF előtti dokumentum teljes (jó xref) és az EOF utáni maradék nem obj-határon kezdődik, az régi/másik fájl maradéka: `JUNK ... leftover` (súly 1). A `startxref N`-nel végződő, csak `%%EOF`-hiányos fájl nem csonka. |
-| `TRANSFER: LF -> CRLF / CRLF -> LF ...` | `check_transfer` (1388), `check_xref_shift` (a sorvégeket a `counts_upto` egy menetben számolja), `check_stream_length`, `find_last_xref` | Szöveges módú átvitel (base64 nélküli e-mail, ASCII FTP): a streamek hossza pont a bennük levő sorvégek számával tér el a `/Length`-től, a `startxref` és az xref-bejegyzések monoton növekvő mértékben csúsznak. Több egybehangzó jel kell, az ellentmondó jelek elnyomják. |
+| `TRUNCATED: ...` | `check_truncated` (1430) | Félbeszakadt letöltés/másolás: nullákkal kitöltött vége, vagy PDF-szerkezet az utolsó `%%EOF` után (pl. linearizált fájlból csak az első oldal szekciója teljes). Ha viszont az EOF előtti dokumentum teljes (jó xref) és az EOF utáni maradék nem obj-határon kezdődik, az régi/másik fájl maradéka: `JUNK ... leftover` (súly 1). A `startxref N`-nel végződő, csak `%%EOF`-hiányos fájl nem csonka. Ha az utolsó `endobj` után már csak a csonka xref-tábla áll, az üzenet jelzi, hogy minden obj megvan, a tartalom helyreállítható. |
+| `CORRUPT: N streams with corrupt compressed data` | `parse_stream`, `parse()` | Sérült tömörített adat: zlib-hiba a stream közepén vagy adler32-eltérés (nem az író checksum-hibája). Csak akkor, ha más sérülés-diagnózis nem magyarázza. |
+| `ENCODED: quoted-printable encoded file` | `check_encoded` | Dekódolatlan e-mail csatolmány: a sorok nagy része `=` soft line breakkel végződik, és sok `=XX` escape van. |
+| `JUNK: ... older / other version's data after the %%EOF ... (overwritten without truncation)` | `check_overwritten` | Egy teljes PDF után egy régebbi/hosszabb változat vége áll a saját xref-jével és `%%EOF`-jával: a fájlt csonkolás nélkül írták felül. A fájl végéről olvasó megjelenítők a rossz xref-et találják. Sérülés (10). |
+| `TRANSFER: LF -> CRLF / CRLF -> LF ...` | `check_transfer` (1388), `check_xref_shift` (a sorvégeket a `counts_upto` egy menetben számolja), `check_stream_length`, `find_last_xref` | Szöveges módú átvitel (base64 nélküli e-mail, ASCII FTP): a streamek hossza pont a bennük levő sorvégek számával tér el a `/Length`-től, a `startxref` és az xref-bejegyzések monoton növekvő mértékben csúsznak. Több egybehangzó jel kell, az ellentmondó jelek elnyomják. Súlya 10, kivéve ha a tartalom nem sérült: csak szöveges fájl (a sorvégek csak whitespace-t érintenek), vagy minden stream hossza stimmel és mind hibátlanul kibontható → 5. |
 | `TRANSFER: ... text only file, N line endings reverted (parsed the repaired data)` | `eol_repair` (a `parse()` elején, a fejléc után) | **Visszaalakítás**, ha egyértelmű: a `startxref` nem xref-szekcióra mutat (sem a fejléchez relatívan, sem abszolút), a `%PDF` fejléctől az utolsó `startxref` soráig (és a közvetlenül utána álló `%%EOF`-ig, ha van) tartó részben nincs bináris byte (32 alatt csak TAB, LF, CR), és a sorvégek egyneműek (csak LF → LF→CRLF-fel próbál, azaz CRLF→LF sérülés; mind CRLF → CRLF→LF-fel, azaz LF→CRLF sérülés). A fejléc előtti szemetet és a `%%EOF` utáni farkat (nulla-padding, HTML, más fájl maradéka) nem vizsgálja és nem is bántja, így egy CRLF-es levelezőfejléc vagy egy bináris farok nem zavar. Csak akkor fogadja el, ha a visszaalakított adatban a `startxref` xref-szekcióra mutat; ilyenkor az elemzés a javított adattal folytatódik, a hamis xref- és stream-hibák nem is keletkeznek, csak ez a 10-es súlyú üzenet marad. Kevert sorvégeknél vagy bináris adatnál nem kísérletezik, mert a 0D 0A eredetileg is lehetett az adatban; ott a `check_transfer` jelez. |
 | `GAP: N bytes missing/inserted inside the stream at offset ...` | `check_gap` (1260) | Minden rossz xref-bejegyzés **ugyanannyival** csúszik, és egy korábbi stream hossza pont ennyivel tér el: sérült másolás egy stream belsejében. |
 | `JUNK: N bytes before the %PDF header (...)` | `junk_kind` (724) | UTF-8 BOM, RTFD, ZIP, OLE2, RTF, MacBinary, HTML, MIME-fejlécek, szöveg vagy bináris a fejléc előtt. Ha az offsetek a fejléchez relatívak, `base` beállítása. |
