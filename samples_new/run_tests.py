@@ -110,7 +110,7 @@ def parse_quiet(data):
 c,n,e=parse_quiet(load_s('lf_text_ok.pdf'))
 check('11a samples/lf_text_ok',n==0 and e==[],str(e))
 c,n,e=parse_quiet(load_s('lf_text_crlf.pdf'))
-check('11b samples/lf_text_crlf repaired: only TRANSFER',n==10 and len(e)==1 and 'text only file, 37 line endings reverted' in e[0][1] and e[0][1].startswith('TRANSFER: LF -> CRLF'),str(e))
+check('11b samples/lf_text_crlf repaired: only TRANSFER',n==5 and len(e)==1 and 'text only file, 37 line endings reverted' in e[0][1] and e[0][1].startswith('TRANSFER: LF -> CRLF'),str(e))
 c,n,e=parse_quiet(load('11c_lf_text_bad_startxref.pdf'))
 check('11c not repaired',not any(m.startswith('TRANSFER') for w,m in e) and len(e)==1 and e[0][1].startswith('XREF: invalid'),str(e))   # a rossz startxref hibaja marad, az xref-et a tartalek megtalalja
 c,n,e=parse_quiet(load('11d_crlf_junk_lf_damaged_body.pdf'))
@@ -118,7 +118,7 @@ check('11d CRLF junk + LF-damaged body repaired',[m[:8] for w,m in e]==['TRANSFE
 c,n,e=parse_quiet(load('11e_lf_damaged_body_binary_tail.pdf'))
 check('11e binary tail after EOF ignored, body repaired',len(e)==1 and e[0][1].startswith('TRANSFER: CRLF -> LF') and 'reverted' in e[0][1],str(e))
 c,n,e=parse_quiet(load('11f_lf_damaged_body_no_eof_zero_tail.pdf'))
-check('11f no EOF + zero tail: repaired, missing EOF stays',[m[:8] for w,m in e]==['TRANSFER','XREF: mi'] and e[0][1].startswith('TRANSFER: CRLF -> LF') and n==15,str(e))
+check('11f no EOF + zero tail: repaired, missing EOF stays',[m[:8] for w,m in e]==['TRANSFER','XREF: mi'] and e[0][1].startswith('TRANSFER: CRLF -> LF') and n==9,str(e))   # (a figyelmeztetesek osszege legfeljebb WARN_MAX)
 
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]

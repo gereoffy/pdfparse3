@@ -21,6 +21,12 @@ import zlib
 import re
 
 WHITESPACE=b'\x00\t\n\x0c\r '
+# pontozas: a DAMAGE (10) sulyu hibak a serulest jelzik (csonka file, adatvesztes, a stream adatot is megvaltoztato
+# atvitel, szemet a pdf elott / felulirt file, dekodolatlan kodolas), a tobbi csak figyelmeztetes (nem szabvanyos, de
+# hasznalhato file: hibas iro program, html / regi adat maradeka a %%EOF utan...). A
+# figyelmeztetesek osszege legfeljebb WARN_MAX, igy a pontszam: 0 = hibatlan, 1..9 = nem szabvanyos, >=10 = serult.
+DAMAGE=10
+WARN_MAX=9
 NOT_CTRL=bytes(range(32,256))+b'\t\n\r'   # a 32 alatti byte-ok kozul ezek lehetnek szoveges file-ban (l. eol_repair)
 
 def hexdigit(a):
@@ -253,7 +259,14 @@ def inflate(d):
         if skip==0: return rd,None,"ZLIB: raw deflate without zlib header (decoded %d bytes)"%(len(rd))
         tail=unused.rstrip(WHITESPACE) if len(unused.rstrip(WHITESPACE))<4 else unused[:4]
         if len(tail)<4: return rd,None,"ZLIB: missing adler32 checksum (decoded %d/%d bytes)"%(len(rd),len(d))
-        if zlib.adler32(rd)!=int.from_bytes(tail[:4],'big'):
+        a=zlib.adler32(rd)
+        st=int.from_bytes(tail[:4],'big')
+        if a!=st:
+            # az adler32 felso 16 bitje (B) az also resz (A) futo osszege az egesz adaton: serult adatnal az is teljesen
+            # mas lenne. Ha a felso fele stimmel, csak az also rossz, az az iro program checksum hibaja, az adat jo
+            # (Acrobat-tal ellenorizve, pl. BCL easyPDF: minden stream ilyen). Kulonben az adat serult (CORRUPT).
+            if a>>16==st>>16:
+                return rd,"ZLIB: adler32 checksum bug of the writer (only the low 16 bits differ), data OK (decoded %d bytes)"%(len(rd)),None
             return rd,"ZLIB: adler32 checksum mismatch, deflate data complete (decoded %d bytes)"%(len(rd)),None
         if err and 'too far back' in err: return rd,None,"ZLIB: window size in zlib header too small, OK with 32K window (decoded %d bytes)"%(len(rd))
         return rd,None,"ZLIB: %s, but raw deflate and checksum OK (decoded %d bytes)"%(err or 'not finished',len(rd))
@@ -805,6 +818,8 @@ class PDFParser():
         self.len_mismatch=[] # (a stream adatanak pozicioja, tenyleges - /Length) az eltero hosszu streameknel
         self.startxref=None # (a startxref erteke, a 'startxref' kulcsszo pozicioja)
         self.binheader=False # van-e binaris komment a header utan (a levelezok ettol binarisnak latjak a file-t)
+        self.decerr=0        # stream dekodolasi hibak szama (l. check_transfer)
+        self.corrupt=0       # hibas tomoritett adatu streamek (zlib adathiba a stream kozepen, nem csak a checksum rossz)
         self.eol_fixed=None  # (kind,db) ha a sorvegeket visszaalakitottuk, es a self.d mar a javitott adat, l. eol_repair
 
     def err(self,msg,n=1):
@@ -930,7 +945,9 @@ class PDFParser():
                     if o>=0 and not self.section_at(o) and self.section_at(o+hdr):
                         self.base=hdr
                         o+=hdr
-                        self.err("JUNK: %d bytes before the %%PDF header (%s), offsets are relative to the header"%(hdr,kind))
+                        # az offsetek a szemet nelkul stimmelnek: a pdf utolag kerult a szemet moge (elcsuszott mentes a
+                        # file-rendszeren, le nem bontott csomagolas...), ez serules (a Chrome / PDFium meg sem nyitja)
+                        self.err("JUNK: %d bytes before the %%PDF header (%s), offsets are relative to the header"%(hdr,kind),DAMAGE)
                     else:
                         print("JUNK: %d bytes before the %%PDF header (%s)"%(hdr,kind))
                 # (a base korrekcio utan: a check_transfer a find_last_xref abszolut poziciojaval hasonlitja ossze)
@@ -946,7 +963,7 @@ class PDFParser():
             except Exception:
                 self.err('XREF: exception!!! '+traceback.format_exc(),10)
         else:
-            self.err('XREF: NOT FOUND!!!',10)
+            self.err('XREF: NOT FOUND!!!',2)   # (a csonka file-t a TRUNCATED jelzi)
 
         self.verify_xref(headend,pend)
         self.check_xref_zero()
@@ -976,9 +993,16 @@ class PDFParser():
             kind,cnt=self.eol_fixed
             msg="TRANSFER: %s line ending conversion damage (text mode transfer, e.g. email without base64 / ASCII FTP): text only file, %d line endings reverted (parsed the repaired data), binary header comment: %s"%(kind,cnt,"yes" if self.binheader else "NO")
             print(msg)
-            self.errors.insert(0,(10,msg))
+            self.errors.insert(0,(5,msg))   # visszaalakitva: a tartalom hianytalan, csak figyelmeztetes
         self.check_transfer()
         if not any(m.startswith('TRANSFER') for w,m in self.errors): self.check_gap()
+        # serult tomoritett adat (a tartalom egy resze elveszett), ha mas diagnozis nem magyarazza
+        if self.corrupt and not any(w>=DAMAGE for w,m in self.errors):
+            msg="CORRUPT: %d streams with corrupt compressed data (content partially lost)"%(self.corrupt)
+            print(msg)
+            self.errors.insert(0,(DAMAGE,msg))
+        self.check_encoded()
+        self.check_overwritten()
       except Exception:
         self.err("PDFparse-Exception!!! %s" % (traceback.format_exc()),10)
 
@@ -1168,10 +1192,12 @@ class PDFParser():
             index=[int(x) for x in (objs_value(objs,b'/Index') or [0,size])]
             if len(w)!=3 or min(w)<0 or len(index)%2: raise ValueError
         except Exception:
-            self.err("XREF: invalid binary xref header: /W=%s /Size=%s /Index=%s"%(str(objs_value(objs,b'/W')),str(objs_value(objs,b'/Size')),str(objs_value(objs,b'/Index'))),10)
+            self.err("XREF: invalid binary xref header: /W=%s /Size=%s /Index=%s"%(str(objs_value(objs,b'/W')),str(objs_value(objs,b'/Size')),str(objs_value(objs,b'/Index'))),2)
             return
         dd=stream.decode(predictor=True)
-        if stream.error: self.err("XREF: binary xref decoding error: "+stream.error,10)
+        if stream.error:
+            self.err("XREF: binary xref decoding error: "+stream.error,2)
+            if 'ZLIB: Error -3' in stream.error or 'adler32 checksum mismatch' in stream.error: self.corrupt+=1
         if stream.note: print("XREF: binary xref: "+stream.note)
         if self.debug: print("XREF binary: W=%s Index=%s"%(str(w),str(index)),dd.hex(' '))
         rl=sum(w)
@@ -1271,6 +1297,8 @@ class PDFParser():
         dd=stream.data if self.encrypt else stream.decode(predictor=is_objstm or is_file)
         if stream.error and not self.encrypt:
             self.err("STREAM: decoding error in obj #%d: %s"%(oid,stream.error))
+            self.decerr+=1
+            if 'ZLIB: Error -3' in stream.error or 'adler32 checksum mismatch' in stream.error: self.corrupt+=1
         if stream.note and not self.encrypt:
             print("STREAM: obj #%d: %s"%(oid,stream.note))
 
@@ -1457,8 +1485,19 @@ class PDFParser():
         msg="TRANSFER: %s line ending conversion damage (text mode transfer, e.g. email without base64 / ASCII FTP): %s"%(kind,", ".join(ev))
         if xok: msg+=", startxref off by %d"%(xdelta)
         msg+=", binary header comment: %s"%("yes" if self.binheader else "NO")
+        # szoveges file-nal (32 alatt csak TAB/CR/LF) a sorvegek valtozasa a tartalmat nem erinti (csak whitespace),
+        # akkor sem, ha a vegyes eredeti sorvegek miatt nem alakithato vissza: figyelmeztetes. Binaris adatnal is csak
+        # figyelmeztetes, ha a stream adatot nem erte el a konverzio: minden stream hossza stimmel, es mind hibatlanul
+        # kibonthato (pl. a Flate streamekben nem volt 0D 0A). Kulonben serules (a streamek tartalma megvaltozott).
+        w=DAMAGE
+        if not len(d.translate(None,NOT_CTRL)):
+            msg+=", text only file (content not affected)"
+            w=5
+        elif n+m+o==0 and self.decerr==0 and self.len_ok>0:
+            msg+=", stream data not affected (all %d stream lengths match, no decoding errors)"%(self.len_ok)
+            w=5
         print(msg)
-        self.errors.insert(0,(10,msg))
+        self.errors.insert(0,(w,msg))
 
     # a sorvege-serules visszaalakitasa, ha egyertelmu: a startxref nem ervenyes szakaszra mutat (sem a headerhez relativan,
     # sem abszolut), es a %PDF headertol az utolso startxref %%EOF-jaig tarto reszben (hdr: a header pozicioja; az elotte
@@ -1494,6 +1533,41 @@ class PDFParser():
         if self.section_at(hdr+o,fixed) or self.section_at(o,fixed): return kind,cnt,fixed
         return None
 
+    # felulirt file: egy teljes pdf utan (az utolso elotti %%EOF-ig) egy regebbi / masik (hosszabb) valtozat vege all, a
+    # sajat xref-jevel es %%EOF-javal (a file-t csonkolas nelkul irtak felul). A maradek egy obj kozepen kezdodik (nem
+    # incremental update), es az utolso xref rossz, az elotte levo startxref viszont ervenyes szakaszra mutat. A file
+    # vegerol olvaso nezok (Acrobat, PDFKit) a rossz xref-et hasznaljak, es nem nyitjak meg: serules.
+    # (Ha a maradek nem er %%EOF-ra, azt a check_truncated jelzi JUNK-kent: ott a nezok a jo xref-et talaljak.)
+    def check_overwritten(self):
+        d=self.d
+        if len(self.badxref)==0: return
+        last=d.rfind(b'%%EOF')
+        prev=d.rfind(b'%%EOF',0,last)
+        if prev<0: return
+        t=d[prev+5:last].lstrip(WHITESPACE)
+        if not t or re_objstart.match(t) or t.startswith(b'xref'): return   # incremental update / linearizalt file
+        q=d.rfind(b'startxref',0,prev)
+        m=re.match(rb'startxref[\x00\t\n\x0c\r ]+(\d{1,10})',d[q:q+40]) if q>=0 else None
+        if not m: return
+        o=int(m.group(1))
+        if not (self.section_at(o+self.base) or self.section_at(o)): return
+        msg="JUNK: %d bytes of an older / other version's data after the %%%%EOF at %d, with its own xref and %%%%EOF at the end (overwritten without truncation, readers using the last xref fail)"%(len(d)-prev-5,prev)
+        print(msg)
+        self.errors.insert(0,(DAMAGE,msg))
+
+    # quoted-printable kodolt file (dekodolatlan email csatolmany): a sorok nagy resze "=" soft line break-kel er veget,
+    # es sok =XX escape van benne. (Valodi pdf-ben a soft line break-szeru "=" sorvegek aranya legfeljebb par %.)
+    def check_encoded(self):
+        d=self.d
+        soft=d.count(b'=\n')   # (a "=\r\n" is "\n"-re vegzodik, de a "=\r\n" "=\n"-et nem tartalmaz)
+        soft+=d.count(b'=\r\n')
+        if soft<20 or soft*4<d.count(b'\n'): return
+        hx=len(re.findall(rb'=[0-9A-F]{2}',d))
+        if hx<20: return
+        msg="ENCODED: quoted-printable encoded file (not decoded, e.g. email attachment): %d soft line breaks, %d =XX escapes"%(soft,hx)
+        print(msg)
+        self.errors.insert(0,(DAMAGE,msg))
+
     # csonka file (felbeszakadt letoltes / masolas): a vege nullakkal van kitoltve, vagy az utolso %%EOF utan
     # meg obj-ek vannak (pl. linearizalt file-nal csak az elso oldal szekcioja teljes)
     def check_truncated(self):
@@ -1525,7 +1599,14 @@ class PDFParser():
         elif last<0: why.append("no %%EOF")
         if not why: return
         self.truncated=True
-        if b'/Linearized' in d[:2048]: why.append("linearized, only the first page section is complete")
+        # a file a zaro xref tablaban szakad meg (az utolso endobj utan mar csak a csonka xref tabla van): minden obj
+        # megvan, csak az xref / trailer hianyzik, a nezok az obj-ekbol ujraepitik (a tartalom helyreallithato, de a
+        # file attol meg csonka). (Ha az utolso endobj utan nincs semmi, az nem biztos: a tovabbi obj-ek is hianyozhatnak.)
+        e=stripped.rfind(b'endobj')
+        tail=stripped[e+6:].lstrip(WHITESPACE) if e>=0 else b''
+        if tail.startswith(b'xref') and not b'trailer' in tail and not b'startxref' in tail:
+            why.append("only the final xref table / trailer is missing (all objects complete, content recoverable)")
+        elif b'/Linearized' in d[:2048]: why.append("linearized, only the first page section is complete")
         msg="TRUNCATED: incomplete file (e.g. interrupted download or copy): "+", ".join(why)
         print(msg)
         self.errors.insert(0,(10,msg))
@@ -1730,7 +1811,11 @@ class PDFParser():
 def parse_pdf(d,debug=False,validate=False):
     pdf=PDFParser(d,debug,validate)
     if not pdf.parse(): return None,99,[(99,"not pdf")]
-    return pdf.content,sum(n for n,msg in pdf.errors),pdf.errors
+    return pdf.content,score(pdf.errors),pdf.errors
+
+# a hibalista pontszama: a serulesek (DAMAGE sulyu hibak) osszege + a figyelmeztetesek osszege (legfeljebb WARN_MAX)
+def score(errors):
+    return sum(n for n,msg in errors if n>=DAMAGE)+min(WARN_MAX,sum(n for n,msg in errors if n<DAMAGE))
 
 
 # hasznalat: pdfparse.py [-d] [-v] file|konyvtar ...
