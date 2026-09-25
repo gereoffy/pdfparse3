@@ -105,11 +105,13 @@ check('10 pages',pdf.pagecnt==1 and not pdf.badxref,"%d %s"%(pdf.pagecnt,pdf.bad
 # 11: sorvege-serules visszaalakitasa (eol_repair, a parse_pdf-en keresztul). A pozitiv tesztek a review-bol
 #     a samples/ konyvtarban vannak (a masik repoval szinkronban), a negativ a samples_new-ban.
 def load_s(name): return open(os.path.join(os.path.dirname(HERE),'samples',name),'rb').read()
-c,n,e=P.parse_pdf(load_s('lf_text_ok.pdf'))
+def parse_quiet(data):
+    with contextlib.redirect_stdout(io.StringIO()): return P.parse_pdf(data)
+c,n,e=parse_quiet(load_s('lf_text_ok.pdf'))
 check('11a samples/lf_text_ok',n==0 and e==[],str(e))
-c,n,e=P.parse_pdf(load_s('lf_text_crlf.pdf'))
+c,n,e=parse_quiet(load_s('lf_text_crlf.pdf'))
 check('11b samples/lf_text_crlf repaired: only TRANSFER',n==10 and len(e)==1 and 'text only file, 37 line endings reverted' in e[0][1] and e[0][1].startswith('TRANSFER: LF -> CRLF'),str(e))
-c,n,e=P.parse_pdf(load('11c_lf_text_bad_startxref.pdf'))
+c,n,e=parse_quiet(load('11c_lf_text_bad_startxref.pdf'))
 check('11c not repaired',not any(m.startswith('TRANSFER') for w,m in e) and len(e)==1 and e[0][1].startswith('XREF: invalid'),str(e))   # a rossz startxref hibaja marad, az xref-et a tartalek megtalalja
 
 # egysegtesztek
