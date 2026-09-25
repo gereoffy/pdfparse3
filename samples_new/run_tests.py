@@ -102,6 +102,16 @@ check('10 binary header comment seen',pdf.binheader==True,str(pdf.binheader))
 check('10 only JUNK error',[m[:4] for m in msgs(pdf)]==['JUNK'] and 'bad pdf header' not in out,str(msgs(pdf)))
 check('10 pages',pdf.pagecnt==1 and not pdf.badxref,"%d %s"%(pdf.pagecnt,pdf.badxref))
 
+# 11: sorvege-serules visszaalakitasa (eol_repair, a parse_pdf-en keresztul). A pozitiv tesztek a review-bol
+#     a samples/ konyvtarban vannak (a masik repoval szinkronban), a negativ a samples_new-ban.
+def load_s(name): return open(os.path.join(os.path.dirname(HERE),'samples',name),'rb').read()
+c,n,e=P.parse_pdf(load_s('lf_text_ok.pdf'))
+check('11a samples/lf_text_ok',n==0 and e==[],str(e))
+c,n,e=P.parse_pdf(load_s('lf_text_crlf.pdf'))
+check('11b samples/lf_text_crlf repaired: only TRANSFER',n==10 and len(e)==1 and 'text only file, 37 line endings reverted' in e[0][1] and e[0][1].startswith('TRANSFER: LF -> CRLF'),str(e))
+c,n,e=P.parse_pdf(load('11c_lf_text_bad_startxref.pdf'))
+check('11c not repaired',not any(m.startswith('TRANSFER') for w,m in e) and len(e)==1 and e[0][1].startswith('XREF: invalid'),str(e))   # a rossz startxref hibaja marad, az xref-et a tartalek megtalalja
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))

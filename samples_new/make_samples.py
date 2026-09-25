@@ -8,8 +8,8 @@ import os
 HERE=os.path.dirname(os.path.abspath(__file__))
 
 # egy pdf osszeallitasa helyes xref tablaval. objs: [(oid, torzs), ...]  (a torzs az "N 0 obj" es "endobj" kozti resz)
-def build(objs,root=1,version=b'1.4',startxref_value=None,eof=True,header_tail=b''):
-    d=b'%PDF-'+version+header_tail+b'\n%\xe2\xe3\xcf\xd3\n'
+def build(objs,root=1,version=b'1.4',startxref_value=None,eof=True,header_tail=b'',comment=b'%\xe2\xe3\xcf\xd3'):
+    d=b'%PDF-'+version+header_tail+b'\n'+comment+b'\n'
     offs={}
     for oid,body in objs:
         offs[oid]=len(d)
@@ -140,3 +140,11 @@ write('09_objstm_unsorted_header.pdf',d)
 #     legyen, kulonben binheader=False es hamis "INVALID object type" hiba (README 10.11).
 d,_,_=build(BASE,header_tail=b' www.example.com')
 write('10_deep_header_text_after_version.pdf',b'J'*2000+d)
+
+# 11c: negativ teszt az eol_repair-hez (a pozitiv tesztek a review-bol a samples/lf_text_ok.pdf es lf_text_crlf.pdf):
+#     csak-LF, szoveges (binaris komment nelkuli) pdf, a startxref mas okbol rossz (+3 byte). Nem szabad
+#     "visszaalakitani" (a visszaalakitott adatban a startxref nem mutatna xref-re), a szokasos
+#     "invalid startxref offset" hiba marad, az xref-et a tartalek megtalalja.
+d,offs,xo=build(BASE,comment=b'%comment')
+d=d.replace(b'startxref\n%d\n'%xo,b'startxref\n%d\n'%(xo+3))
+write('11c_lf_text_bad_startxref.pdf',d)
