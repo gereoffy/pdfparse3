@@ -8,20 +8,21 @@ import os
 HERE=os.path.dirname(os.path.abspath(__file__))
 
 # egy pdf osszeallitasa helyes xref tablaval. objs: [(oid, torzs), ...]  (a torzs az "N 0 obj" es "endobj" kozti resz)
-def build(objs,root=1,version=b'1.4',startxref_value=None,eof=True,header_tail=b'',comment=b'%\xe2\xe3\xcf\xd3'):
-    d=b'%PDF-'+version+header_tail+b'\n'+comment+b'\n'
+def build(objs,root=1,version=b'1.4',startxref_value=None,eof=True,header_tail=b'',comment=b'%\xe2\xe3\xcf\xd3',eol=b'\n'):
+    d=b'%PDF-'+version+header_tail+eol+comment+eol
     offs={}
     for oid,body in objs:
         offs[oid]=len(d)
-        d+=b'%d 0 obj\n'%oid+body+b'\nendobj\n'
+        d+=b'%d 0 obj'%oid+eol+body+eol+b'endobj'+eol
     xo=len(d)
     size=max(offs)+1
-    d+=b'xref\n0 %d\n'%size+b'0000000000 65535 f \n'
+    xeol=b' '+eol if eol==b'\n' else eol     # az xref bejegyzes 20 byte: "n \n" ill. "n\r\n"
+    d+=b'xref'+eol+b'0 %d'%size+eol+b'0000000000 65535 f'+xeol
     for oid in range(1,size):
-        d+=b'%010d 00000 n \n'%offs[oid] if oid in offs else b'0000000000 65535 f \n'
-    d+=b'trailer\n<</Size %d/Root %d 0 R>>\nstartxref\n'%(size,root)
-    d+=(b'%d'%xo if startxref_value is None else startxref_value)+b'\n'
-    if eof: d+=b'%%EOF\n'
+        d+=(b'%010d 00000 n'%offs[oid] if oid in offs else b'0000000000 65535 f')+xeol
+    d+=b'trailer'+eol+b'<</Size %d/Root %d 0 R>>'%(size,root)+eol+b'startxref'+eol
+    d+=(b'%d'%xo if startxref_value is None else startxref_value)+eol
+    if eof: d+=b'%%EOF'+eol
     return d,offs,xo
 
 def stream(dct,data):
@@ -148,3 +149,10 @@ write('10_deep_header_text_after_version.pdf',b'J'*2000+d)
 d,offs,xo=build(BASE,comment=b'%comment')
 d=d.replace(b'startxref\n%d\n'%xo,b'startxref\n%d\n'%(xo+3))
 write('11c_lf_text_bad_startxref.pdf',d)
+
+# 11d: CRLF sorvegu szoveges pdf, CRLF -> LF serulessel, es elotte CRLF-es levelezo fejlec (szemet). Az eol_repair csak a
+#     %PDF headertol nezi a sorvegeket, igy a szemet eltero sorvegei nem zavarjak: visszaalakitja, TRANSFER + JUNK marad.
+#     (Az egesz file-t nezve kevert sorvegek lennenek, es nem javitana.)
+d,_,_=build(BASE,comment=b'%comment',eol=b'\r\n')
+junk=b'Content-Type: application/pdf\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
+write('11d_crlf_junk_lf_damaged_body.pdf',junk+d.replace(b'\r\n',b'\n'))

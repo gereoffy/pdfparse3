@@ -33,7 +33,7 @@ content, errcnt, errors = parse_pdf(data, debug=False, validate=False)
 
 Ha a fájl nem PDF (nincs benne `%PDF-` vagy `%FDF-` fejléc): `(None, 99, [(99, "not pdf")])`.
 
-A `parse_pdf` a sorvége-sérülés visszaalakítását is elvégzi (8. fejezet, `eol_repair`): ha a `PDFParser.parse()` a visszaalakítást javasolja (`eol_fixed`), a `parse_pdf` a javított adattal **új elemzőt** futtat, és annak eredményét adja vissza egy 10-es súlyú `TRANSFER` hibával az elején. Aki közvetlenül a `PDFParser` osztályt használja, annak ezt magának kell megtennie: az első `parse()` ilyenkor az xref feldolgozása előtt visszatér.
+A sorvége-sérülés visszaalakítása (8. fejezet, `eol_repair`) a `parse()` elején, a fejléc megtalálása után történik: ha javítani kellett, az elemző a javított adattal dolgozik tovább (`self.d`), és a hibalista elejére egy 10-es súlyú `TRANSFER` üzenet kerül; az `eol_fixed` attribútum `(irány, darab)` párként őrzi a tényt. Az eredeti byte-sort az elemző nem őrzi meg.
 
 ### 2.2 Parancssorból
 
@@ -79,12 +79,13 @@ A `TRANSFER`, `GAP`, `TRUNCATED` és a `%%EOF` utáni maradék (`JUNK ... leftov
 ```
 fejléc keresése (%PDF- / %FDF-, első 1024 byte, majd bárhol)
   └─ a fejléc-sor és a bináris komment átugrása, binheader megjegyzése
+eol_repair – rögtön a fejléc után: ha a startxref nem xref-szekcióra mutat, és a fejléctől kezdődő rész
+  szöveges, egynemű sorvégekkel, a sorvégek visszaalakítása; ha így már jó helyre mutat, innentől a javított
+  adat a self.d (a fejléc előtti szemét változatlan marad)
 startxref megkeresése a fájl végéről (rfind)
   ├─ offset beolvasása, %%EOF ellenőrzése
   ├─ a %%EOF utáni rész osztályozása: obj-ek (csonka), HTML, nulla-padding, szemét → pend levágása
   ├─ a fejléc előtti szemét: ha az offsetek a fejléchez relatívak, base=hdr
-  ├─ ha a startxref nem xref-szekcióra mutat: eol_repair – csak szöveges fájlnál a sorvégek visszaalakítása,
-  │    és ha így már jó helyre mutat, a parse() visszatér, a parse_pdf a javított adattal újrakezdi
   └─ parse_xref: xref-szekciók (ASCII tábla / xref stream) a /Prev és /XRefStm láncon
 verify_xref       – minden xref-bejegyzés tényleg a "N G obj"-ra mutat-e (badxref)
 check_xref_zero   – "0 offsetű n" bejegyzések: létező objektumok-e
@@ -230,7 +231,7 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 |---|---|---|
 | `TRUNCATED: ...` | `check_truncated` (1430) | Félbeszakadt letöltés/másolás: nullákkal kitöltött vége, vagy PDF-szerkezet az utolsó `%%EOF` után (pl. linearizált fájlból csak az első oldal szekciója teljes). Ha viszont az EOF előtti dokumentum teljes (jó xref) és az EOF utáni maradék nem obj-határon kezdődik, az régi/másik fájl maradéka: `JUNK ... leftover` (súly 1). A `startxref N`-nel végződő, csak `%%EOF`-hiányos fájl nem csonka. |
 | `TRANSFER: LF -> CRLF / CRLF -> LF ...` | `check_transfer` (1388), `check_xref_shift` (a sorvégeket a `counts_upto` egy menetben számolja), `check_stream_length`, `find_last_xref` | Szöveges módú átvitel (base64 nélküli e-mail, ASCII FTP): a streamek hossza pont a bennük levő sorvégek számával tér el a `/Length`-től, a `startxref` és az xref-bejegyzések monoton növekvő mértékben csúsznak. Több egybehangzó jel kell, az ellentmondó jelek elnyomják. |
-| `TRANSFER: ... text only file, N line endings reverted (parsed the repaired data)` | `eol_repair`, `parse_pdf` | **Visszaalakítás**, ha egyértelmű: a `startxref` nem xref-szekcióra mutat, a fájlban nincs bináris byte (32 alatt csak TAB, LF, CR), és a sorvégek egyneműek (csak LF → LF→CRLF-fel próbál, azaz CRLF→LF sérülés; mind CRLF → CRLF→LF-fel, azaz LF→CRLF sérülés). Csak akkor fogadja el, ha a visszaalakított adatban a `startxref` (közvetlenül vagy a fejléchez relatívan) xref-szekcióra mutat. Ilyenkor a `parse_pdf` a javított adatot elemzi: a hamis xref- és stream-hibák eltűnnek, csak ez a 10-es súlyú üzenet marad. Kevert sorvégeknél vagy bináris adatnál nem kísérletezik, mert a 0D 0A eredetileg is lehetett az adatban; ott a `check_transfer` jelez. |
+| `TRANSFER: ... text only file, N line endings reverted (parsed the repaired data)` | `eol_repair` (a `parse()` elején, a fejléc után) | **Visszaalakítás**, ha egyértelmű: a `startxref` nem xref-szekcióra mutat (sem a fejléchez relatívan, sem abszolút), a `%PDF` fejléctől kezdődő részben nincs bináris byte (32 alatt csak TAB, LF, CR), és a sorvégek egyneműek (csak LF → LF→CRLF-fel próbál, azaz CRLF→LF sérülés; mind CRLF → CRLF→LF-fel, azaz LF→CRLF sérülés). A fejléc előtti szemetet nem vizsgálja és nem is bántja, így egy CRLF-es levelezőfejléc nem zavar. Csak akkor fogadja el, ha a visszaalakított adatban a `startxref` xref-szekcióra mutat; ilyenkor az elemzés a javított adattal folytatódik, a hamis xref- és stream-hibák nem is keletkeznek, csak ez a 10-es súlyú üzenet marad. Kevert sorvégeknél vagy bináris adatnál nem kísérletezik, mert a 0D 0A eredetileg is lehetett az adatban; ott a `check_transfer` jelez. |
 | `GAP: N bytes missing/inserted inside the stream at offset ...` | `check_gap` (1260) | Minden rossz xref-bejegyzés **ugyanannyival** csúszik, és egy korábbi stream hossza pont ennyivel tér el: sérült másolás egy stream belsejében. |
 | `JUNK: N bytes before the %PDF header (...)` | `junk_kind` (724) | UTF-8 BOM, RTFD, ZIP, OLE2, RTF, MacBinary, HTML, MIME-fejlécek, szöveg vagy bináris a fejléc előtt. Ha az offsetek a fejléchez relatívak, `base` beállítása. |
 | `JUNK: N bytes after %%EOF (HTML)` | `parse` | HTML a PDF után (poliglott fájl); tartalomként is kiadja. |
@@ -375,6 +376,7 @@ A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tar
 | `10_deep_header_text_after_version.pdf` | 2000 byte szemét a `%PDF` előtt és szöveg a verzió után a fejléc-sorban (10.11): `base=2000`, `binheader` igaz, csak a JUNK hiba |
 | `../samples/lf_text_ok.pdf`, `../samples/lf_text_crlf.pdf` | (a `samples/`-ben, a másik repóval szinkronban) csak-LF szöveges PDF és LF→CRLF-sérült változata: az `eol_repair` visszaalakítja, csak a TRANSFER marad (8. fejezet) |
 | `11c_lf_text_bad_startxref.pdf` | negatív teszt: csak-LF szöveges PDF más okból rossz `startxref`-fel: nem alakítja vissza, a szokásos `invalid startxref offset` hiba marad |
+| `11d_crlf_junk_lf_damaged_body.pdf` | CRLF-es levelezőfejléc a `%PDF` előtt + CRLF→LF-sérült törzs: a fejléctől vizsgálva visszaalakítja, TRANSFER + JUNK marad (az egész fájlt nézve kevert sorvégek lennének) |
 | `08_lzw_earlychange0_no_eod.pdf` (+ `08_payload.bin`) | három LZW csatolmány (10.9): `/EarlyChange 0` záró kód nélkül és alap EarlyChange záró kóddal (byte-ra egyeznek a payloaddal, a hiányzó EOD megjegyzés), valamint záró kód nélkül feloldhatatlan `/Length 99 0 R`-rel: ez az egyetlen hiba |
 
 - `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül.
