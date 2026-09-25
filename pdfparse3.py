@@ -805,8 +805,7 @@ class PDFParser():
         self.len_mismatch=[] # (a stream adatanak pozicioja, tenyleges - /Length) az eltero hosszu streameknel
         self.startxref=None # (a startxref erteke, a 'startxref' kulcsszo pozicioja)
         self.binheader=False # van-e binaris komment a header utan (a levelezok ettol binarisnak latjak a file-t)
-        self.eol_fixed=None  # visszaalakitott sorvegu adat (kind,db,data), l. eol_repair
-        self.no_eol_repair=False
+        self.eol_fixed=None  # (kind,db) ha a sorvegeket visszaalakitottuk, es a self.d mar a javitott adat, l. eol_repair
 
     def err(self,msg,n=1):
         print(msg)
@@ -843,6 +842,15 @@ class PDFParser():
         p+=5
         while p<pend and d[p] in b'0123456789.': p+=1
         headend=p
+        # sorvege-serules visszaalakitasa, ha egyertelmu (szoveges file, a startxref emiatt nem mutat xref-re). Rogton a
+        # header utan, es csak a headertol nezve: a header elotti szemet (pl. CRLF-es levelezo fejlec) nem zavar bele.
+        # A tovabbiakban a visszaalakitott adattal dolgozunk, igy a hamis xref/stream hibak nem is keletkeznek.
+        fixed=self.eol_repair(hdr)
+        if fixed:
+            kind,cnt,d=fixed
+            self.d=d
+            pend=len(d)
+            self.eol_fixed=(kind,cnt)
         # (a korlatok a headerhez relativak: 1024 byte-on tuli header eseten az abszolut p<1024 sosem teljesult,
         # a binheader hamis lett, es a header sorban a verzio utan allo szoveg hamis "INVALID object type" hibat adott)
         while p<pend and d[p]!=10 and d[p]!=13 and p<hdr+1024: p+=1
@@ -927,9 +935,6 @@ class PDFParser():
                         print("JUNK: %d bytes before the %%PDF header (%s)"%(hdr,kind))
                 # (a base korrekcio utan: a check_transfer a find_last_xref abszolut poziciojaval hasonlitja ossze)
                 if o>=0: self.startxref=(o,oend)
-                if o>=0 and not self.no_eol_repair and not self.section_at(o):
-                    self.eol_fixed=self.eol_repair(o)
-                    if self.eol_fixed: return True   # a parse_pdf a visszaalakitott adattal kezdi ujra
                 # parse it!
                 if o<p or o>=oend:
                     # invalid offset, find xref...
@@ -967,6 +972,11 @@ class PDFParser():
         self.err("PDFparse-Exception!!! %s" % (traceback.format_exc()),10)
 
       try:
+        if self.eol_fixed:
+            kind,cnt=self.eol_fixed
+            msg="TRANSFER: %s line ending conversion damage (text mode transfer, e.g. email without base64 / ASCII FTP): text only file, %d line endings reverted (parsed the repaired data), binary header comment: %s"%(kind,cnt,"yes" if self.binheader else "NO")
+            print(msg)
+            self.errors.insert(0,(10,msg))
         self.check_transfer()
         if not any(m.startswith('TRANSFER') for w,m in self.errors): self.check_gap()
       except Exception:
@@ -1058,9 +1068,9 @@ class PDFParser():
         for m in re_xrefkw.finditer(self.d,max(0,start),end): x=m.start()
         return x
 
-    # kezdodik-e xref szekcio (ASCII tabla vagy xref stream obj) az 'o' pozicion?
-    def section_at(self,o):
-        d=self.d
+    # kezdodik-e xref szekcio (ASCII tabla vagy xref stream obj) az 'o' pozicion? (d: mas buffer, pl. a javitott adat)
+    def section_at(self,o,d=None):
+        if d is None: d=self.d
         if o<0 or o>=len(d): return False
         while o<len(d) and d[o] in WHITESPACE: o+=1
         return d.startswith(b'xref',o) or re_objstart.match(d,o)!=None
@@ -1450,27 +1460,33 @@ class PDFParser():
         print(msg)
         self.errors.insert(0,(10,msg))
 
-    # a sorvege-serules visszaalakitasa, ha egyertelmu (a startxref nem ervenyes szakaszra mutat): csak ha a file-ban
-    # nincs binaris adat (32 alatti byte csak TAB, LF, CR), es
+    # a sorvege-serules visszaalakitasa, ha egyertelmu: a startxref nem ervenyes szakaszra mutat (sem a headerhez relativan,
+    # sem abszolut), es a %PDF headertol kezdodo reszben (hdr: a header pozicioja; az elotte levo szemetet nem nezzuk es
+    # nem is bantjuk) nincs binaris adat (32 alatti byte csak TAB, LF, CR), es
     #  - nincs benne CR, csak LF: LF -> CRLF visszaalakitassal probalkozunk (CRLF -> LF serules)
     #  - pontosan annyi CR van, ahany LF, es mind CRLF par: CRLF -> LF visszaalakitassal (LF -> CRLF serules)
     # Mas esetben (kevert sorvegek, binaris adat) nem kiserletezunk, a check_transfer jelzi a serulest.
     # Ellenorzes: a visszaalakitott adatban a startxref ervenyes szakaszra mutat. return: (kind,db,data) vagy None
-    def eol_repair(self,o):
+    # (A parse() elejen fut, a startxref-et maga olvassa ki; a parse() utana ugyanugy ujraolvassa.)
+    def eol_repair(self,hdr):
         d=self.d
-        if len(d.translate(None,NOT_CTRL)): return None   # binaris adat: 0D 0A eredetileg is lehetett benne
-        cr=d.count(b'\r')
-        lf=d.count(b'\n')
+        q=d.rfind(b'startxref',hdr)
+        m=re.match(rb'startxref[\x00\t\n\x0c\r ]+(\d{1,10})',d[q:q+32]) if q>=0 else None
+        if not m: return None
+        o=int(m.group(1))
+        if self.section_at(hdr+o) or self.section_at(o): return None   # a startxref jo, nincs mit javitani
+        body=d[hdr:]
+        if len(body.translate(None,NOT_CTRL)): return None   # binaris adat: 0D 0A eredetileg is lehetett benne
+        cr=body.count(b'\r')
+        lf=body.count(b'\n')
         if cr==0 and lf:
-            kind,cnt,fixed="CRLF -> LF",lf,d.replace(b'\n',b'\r\n')
-        elif cr==lf and d.count(b'\r\n')==cr:
-            kind,cnt,fixed="LF -> CRLF",cr,d.replace(b'\r\n',b'\n')
+            kind,cnt,body="CRLF -> LF",lf,body.replace(b'\n',b'\r\n')
+        elif cr==lf and body.count(b'\r\n')==cr:
+            kind,cnt,body="LF -> CRLF",cr,body.replace(b'\r\n',b'\n')
         else:
             return None
-        # (a header elotti szemetnel az offsetek a headerhez relativak lehetnek)
-        for so in (o,o+fixed.find(b'%PDF-')):
-            while so<len(fixed) and fixed[so] in WHITESPACE: so+=1
-            if fixed.startswith(b'xref',so) or re_objstart.match(fixed,so): return kind,cnt,fixed
+        fixed=d[:hdr]+body
+        if self.section_at(hdr+o,fixed) or self.section_at(o,fixed): return kind,cnt,fixed
         return None
 
     # csonka file (felbeszakadt letoltes / masolas): a vege nullakkal van kitoltve, vagy az utolso %%EOF utan
@@ -1709,14 +1725,6 @@ class PDFParser():
 def parse_pdf(d,debug=False,validate=False):
     pdf=PDFParser(d,debug,validate)
     if not pdf.parse(): return None,99,[(99,"not pdf")]
-    if pdf.eol_fixed:
-        kind,cnt,fixed=pdf.eol_fixed
-        pdf=PDFParser(fixed,debug,validate)
-        pdf.no_eol_repair=True
-        pdf.parse()
-        msg="TRANSFER: %s line ending conversion damage (text mode transfer, e.g. email without base64 / ASCII FTP): text only file, %d line endings reverted (parsed the repaired data), binary header comment: %s"%(kind,cnt,"yes" if pdf.binheader else "NO")
-        print(msg)
-        pdf.errors.insert(0,(10,msg))
     return pdf.content,sum(n for n,msg in pdf.errors),pdf.errors
 
 
