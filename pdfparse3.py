@@ -22,8 +22,9 @@ import re
 
 WHITESPACE=b'\x00\t\n\x0c\r '
 # pontozas: a DAMAGE (10) sulyu hibak a serulest jelzik (csonka file, adatvesztes, a stream adatot is megvaltoztato
-# atvitel, szemet a pdf elott / felulirt file, dekodolatlan kodolas), a tobbi csak figyelmeztetes (nem szabvanyos, de
-# hasznalhato file: hibas iro program, html / regi adat maradeka a %%EOF utan...). A
+# atvitel, szemet a pdf elott, ha a header 1024 byte-on tul van / felulirt file, dekodolatlan kodolas), a
+# tobbi csak figyelmeztetes (nem szabvanyos, de hasznalhato file: hibas iro program, html / regi adat maradeka a %%EOF
+# utan...). A
 # figyelmeztetesek osszege legfeljebb WARN_MAX, igy a pontszam: 0 = hibatlan, 1..9 = nem szabvanyos, >=10 = serult.
 DAMAGE=10
 WARN_MAX=9
@@ -806,6 +807,8 @@ class PDFParser():
         self.pagenum=None
         self.objsnum=0
         self.uriobjid=-1
+        self.urls=[]        # az URI action-ok celjai (content modban kiadjuk: pdfstream.urls, a javascript: URI-k pdfstream.uri.js)
+        self.urlrefs=[]     # /URI 30 0 R: a hivatkozott string obj-ek, a vegen oldjuk fel (resolve_urls)
         self.efnames={}     # csatolmany stream oid -> fajlnev (a Filespec /EF << /F 12 0 R >> hivatkozasa alapjan)
         self.efrefs={}      # /EF 39 0 R (hivatkozott EF dict) obj szama -> fajlnev, a vegen oldjuk fel (name_files)
         self.efdicts={}     # EF dict obj szama -> [hivatkozott stream oid-k]  (csak /F /UF /DOS /Mac /Unix kulcsu dict-ek)
@@ -945,9 +948,12 @@ class PDFParser():
                     if o>=0 and not self.section_at(o) and self.section_at(o+hdr):
                         self.base=hdr
                         o+=hdr
-                        # az offsetek a szemet nelkul stimmelnek: a pdf utolag kerult a szemet moge (elcsuszott mentes a
-                        # file-rendszeren, le nem bontott csomagolas...), ez serules (a Chrome / PDFium meg sem nyitja)
-                        self.err("JUNK: %d bytes before the %%PDF header (%s), offsets are relative to the header"%(hdr,kind),DAMAGE)
+                        # az offsetek a szemet nelkul stimmelnek: a pdf utolag kerult a szemet moge. Ha a header az elso
+                        # 1024 byte-on belul van, a nezok megnyitjak (a szabvany szerint is ott lehet): figyelmeztetes,
+                        # barmi van elotte. Serules, ha a header ennel hatrebb van (le nem bontott csomagolas: TNEF, RTFD,
+                        # mbox...; ezeket az Acrobat / Chrome meg sem nyitja).
+                        w=DAMAGE if self.deep_header else 5
+                        self.err("JUNK: %d bytes before the %%PDF header (%s), offsets are relative to the header"%(hdr,kind),w)
                     else:
                         print("JUNK: %d bytes before the %%PDF header (%s)"%(hdr,kind))
                 # (a base korrekcio utan: a check_transfer a find_last_xref abszolut poziciojaval hasonlitja ossze)
@@ -983,6 +989,7 @@ class PDFParser():
         self.verify_xref_stm()
         self.resolve_js()
         self.resolve_launch()
+        self.resolve_urls()
         self.name_files()
 
       except Exception:
@@ -1670,8 +1677,12 @@ class PDFParser():
                 i+=1
 #                print(type(objs[i]))
 #                print(objs[i])
-                if type(objs[i])==PDFString: print("OBJSTREAM.URI="+str(objs[i].get()))
-                if type(objs[i])==int: self.uriobjid=objs[i]
+                if type(objs[i])==PDFString:
+                    print("OBJSTREAM.URI="+str(objs[i].get()))
+                    self.urls.append(objs[i].get())
+                if type(objs[i])==int:
+                    self.uriobjid=objs[i]
+                    if i+2<len(objs) and objs[i+2]==b'R': self.urlrefs.append(objs[i])
             except Exception:
                 break
 
@@ -1749,7 +1760,9 @@ class PDFParser():
                     if depth==0: break
                     depth-=1
                 elif type(t)==PDFString: parts.append(text_bytes(t.get()))
-                elif t in (b'/Win',b'/Unix',b'/Mac',b'/F',b'/P',b'/D',b'/O'): parts.append(t)
+                elif t in (b'/Win',b'/Unix',b'/Mac',b'/F',b'/P',b'/D',b'/O'):
+                    # (beagyazott Filespec: /F << /Type /Filespec /F (x) >> -> "/F x", nem "/F /F x")
+                    if not parts or parts[-1]!=t: parts.append(t)
                 elif type(t)==int and k+2<len(objs) and type(objs[k+1])==int and objs[k+2]==b'R':
                     if objs[k-1]==b'/F': refs.append(t)
                     k+=2
@@ -1786,6 +1799,28 @@ class PDFParser():
             t=b' '.join(parts)
             print("LAUNCH: "+str(t))
             self.add_content(t,"pdfstream.launch")
+
+    # URI action-ok (content modban): az URL-lista (pdfstream.urls, soronkent egy, ismetles nelkul), a javascript: URI-k
+    # nelkul: azok kodja kulon tetelekben (pdfstream.uri.js: a sema utani resz, a %XX kodolas visszafejtve). Ezek nem PDF
+    # JavaScriptek (a nezo a bongeszonek adja at az URI-t), de weboldalbol nyomtatott pdf-ekben gyakoriak, es a JS-t
+    # kereso szuronek hasznosak.
+    def resolve_urls(self):
+        if self.validate or self.encrypt: return
+        for oid in self.urlrefs:
+            if oid in self.strobjs: self.urls.append(self.strobjs[oid])
+        seen=set()
+        urls=[]
+        for u in self.urls:
+            u=bytes(u).strip()
+            if not u or u in seen: continue
+            seen.add(u)
+            if u[:11].lower()==b'javascript:':
+                js=re.sub(rb'%([0-9A-Fa-f]{2})',lambda m: bytes([int(m.group(1),16)]),u[11:]).strip()
+                print("JSCR(uri): %d bytes: %s"%(len(js),str(js[:256])))
+                self.add_content(js,"pdfstream.uri.js")
+            else:
+                urls.append(u)
+        if urls: self.add_content(b'\n'.join(urls)+b'\n',"pdfstream.urls")
 
     # a /JS 12 0 R altal hivatkozott obj-ek (stream vagy string) kinyerese
     def resolve_js(self):
