@@ -1,0 +1,47 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /OpenAction 4 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R >>
+endobj
+5 0 obj
+<< /Type /Action /S /URI /URI (javascript:app.alert\(1\)) >>
+endobj
+6 0 obj
+<< /Type /Action /S /URI /URI 7 0 R >>
+endobj
+7 0 obj
+(javascript:%20var%20x=window.open\('/a'\))
+endobj
+8 0 obj
+<< /S /URI /URI (http://example.org/a) >>
+endobj
+9 0 obj
+<< /S /URI /URI (http://example.org/a) >>
+endobj
+10 0 obj
+<< /S /Launch /F << /Type /Filespec /F (javascript:void\(0\)) >> >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000015 00000 n 
+0000000082 00000 n 
+0000000139 00000 n 
+0000000000 00000 f 
+0000000186 00000 n 
+0000000262 00000 n 
+0000000316 00000 n 
+0000000375 00000 n 
+0000000432 00000 n 
+0000000489 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R >>
+startxref
+573
+%%EOF
