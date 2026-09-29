@@ -101,6 +101,7 @@ objektumok bejárása
 verify_xref_stm   – a bináris xref szerinti objstm-tagság ellenőrzése
 resolve_js        – "/JS 12 0 R" hivatkozások feloldása
 resolve_launch    – Launch /F hivatkozások feloldása
+resolve_urls      – URI action-ök: pdfstream.urls, a javascript: URI-k pdfstream.uri.js (csak content módban)
 name_files        – a csatolmányok neve a Filespec /EF hivatkozásai szerint
 check_transfer    – sorvége-konverzió (LF↔CRLF) felismerése
 check_gap         – hiányzó/beszúrt byte-ok egy stream belsejében (ha nincs TRANSFER)
