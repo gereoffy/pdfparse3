@@ -1818,12 +1818,12 @@ class PDFParser():
             print("LAUNCH: "+str(t))
             self.add_content(t,"pdfstream.launch")
 
-    # URI action-ok (content modban): az URL-lista (pdfstream.urls, soronkent egy, ismetles nelkul), a javascript: URI-k
+    # URI action-ok: az URL-lista (pdfstream.urls, soronkent egy, ismetles nelkul), a javascript: URI-k
     # nelkul: azok kodja kulon tetelekben (pdfstream.uri.js: a sema utani resz, a %XX kodolas visszafejtve). Ezek nem PDF
     # JavaScriptek (a nezo a bongeszonek adja at az URI-t), de weboldalbol nyomtatott pdf-ekben gyakoriak, es a JS-t
     # kereso szuronek hasznosak.
     def resolve_urls(self):
-        if self.validate or self.encrypt: return
+        if self.encrypt: return   # (validate modban is fut: a kiirasok kellenek, az add_content ott ugysem tarol adatot)
         for oid in self.urlrefs:
             if oid in self.strobjs: self.urls.append(self.strobjs[oid])
         seen=set()

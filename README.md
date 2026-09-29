@@ -61,8 +61,8 @@ A program a futása közben **sok mindent kiír a stdout-ra** (a `print` hívás
 | `pdfstream.dat` vagy a csatolmány fájlneve | `/EmbeddedFile` stream kibontott adata (titkosított PDF-nél nyersen) |
 | `pdfstream.html` | a `%PDF` fejléc előtti vagy a `%%EOF` utáni HTML |
 | `pdfstream.launch` | Launch action célja: a `/F`, `/Win`, `/Unix`, `/Mac`, `/P`, `/D`, `/O` értékek szóközzel összefűzve (beágyazott Filespec-nél az ismétlődő kulcs csak egyszer: `/F javascript:void(0)`) |
-| `pdfstream.urls` | csak content módban: az URI action-ök céljai (közvetlen string vagy hivatkozott string obj, objstm-ben is), soronként egy, ismétlés nélkül, egy tételben; a `javascript:` URI-k nélkül (azok a `pdfstream.uri.js`-ben) |
-| `pdfstream.uri.js` | csak content módban: a `javascript:` URI-k kódja (a séma utáni rész, a `%XX` kódolás visszafejtve). Nem PDF JavaScript (a megjelenítő az URI-t a böngészőnek adja át), de weboldalból nyomtatott PDF-ekben gyakori, és a JS-t kereső szűrőnek hasznos |
+| `pdfstream.urls` | az URI action-ök céljai (közvetlen string vagy hivatkozott string obj, objstm-ben is), soronként egy, ismétlés nélkül, egy tételben; a `javascript:` URI-k nélkül (azok a `pdfstream.uri.js`-ben) |
+| `pdfstream.uri.js` | a `javascript:` URI-k kódja (a séma utáni rész, a `%XX` kódolás visszafejtve). Nem PDF JavaScript (a megjelenítő az URI-t a böngészőnek adja át), de weboldalból nyomtatott PDF-ekben gyakori, és a JS-t kereső szűrőnek hasznos |
 
 ### 2.4 Hibasúlyok és pontozás
 
@@ -101,7 +101,7 @@ objektumok bejárása
 verify_xref_stm   – a bináris xref szerinti objstm-tagság ellenőrzése
 resolve_js        – "/JS 12 0 R" hivatkozások feloldása
 resolve_launch    – Launch /F hivatkozások feloldása
-resolve_urls      – URI action-ök: pdfstream.urls, a javascript: URI-k pdfstream.uri.js (csak content módban)
+resolve_urls      – URI action-ök: pdfstream.urls, a javascript: URI-k pdfstream.uri.js
 name_files        – a csatolmányok neve a Filespec /EF hivatkozásai szerint
 check_transfer    – sorvége-konverzió (LF↔CRLF) felismerése
 check_gap         – hiányzó/beszúrt byte-ok egy stream belsejében (ha nincs TRANSFER)
@@ -220,7 +220,7 @@ A `/First` byte-os fejlécből (`oid offset` párok) kiolvassa a belső obj-eket
 Egy obj token-listáján:
 
 - **string-obj**: ha az obj törzse egy string, `strobjs[oid]` (a `/JS 12 0 R` és Launch feloldáshoz); `http`/`script` tartalmút kiír;
-- **`/URI`**: a célt (string) gyűjti (`urls`), a hivatkozott string obj-t (`/URI 30 0 R`) a végén oldja fel (`resolve_urls`); content módban ebből lesz a `pdfstream.urls` és a `javascript:` URI-kból a `pdfstream.uri.js`;
+- **`/URI`**: a célt (string) gyűjti (`urls`), a hivatkozott string obj-t (`/URI 30 0 R`) a végén oldja fel (`resolve_urls`); ebből lesz a `pdfstream.urls` és a `javascript:` URI-kból a `pdfstream.uri.js`;
 - **Filespec** (`/Type /Filespec` vagy `/UF`): a neveit `fsobjs`-be teszi, és az `/EF << /F 3 0 R /UF 3 0 R >>` által hivatkozott stream obj-számaihoz rendeli a fájlnevet (`efnames`; a későbbi Filespec győz). Ha az `/EF` maga is hivatkozás (`/EF 39 0 R`, külön objektumban álló `<< /F 47 0 R >>` dict), a nevet `efrefs`-be teszi, az ilyen, csak `/F` `/UF` `/DOS` `/Mac` `/Unix` kulcsú dict-eket pedig `efdicts`-be. A feldolgozás végén a `name_files` először az `efrefs`→`efdicts` láncot oldja fel, majd ezzel nevezi el a `/EmbeddedFile` tartalmakat; a Filespec nélküli stream `pdfstream.dat` marad;
 - **`/JS`**: minden előfordulás; string → azonnal `pdfstream.js`, hivatkozás → `jsrefs`, a végén `resolve_js` oldja fel (string-obj vagy stream);
 - **`/S /Launch`**: az egész action dict-et bejárja, a `/F`, `/Win`, `/Unix`, `/Mac`, `/P`, `/D`, `/O` értékeket összefűzi; a hivatkozott `/F`-et a végén `resolve_launch` oldja fel (Filespec nevei, string-obj, vagy az obj összes stringje);
