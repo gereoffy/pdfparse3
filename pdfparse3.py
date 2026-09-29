@@ -1696,8 +1696,10 @@ class PDFParser():
             fn=top.get(b'/UF')
             if type(fn)!=PDFString: fn=top.get(b'/F')
             if type(fn)==PDFString:
-                print("FILESTREAM.name="+str(fn.get()))
                 name=decode_filename(fn.get())
+                # (nem csak csatolmany: Launch / GoToR action celja is lehet Filespec. A nem ASCII karakterek \uXXXX alakban,
+                # igy a kimenet kodolasatol fuggetlen; a tobbi -- a \ is -- valtozatlan, nem repr/ascii, ami megduplazna)
+                print("FILESPEC.name=%s%s"%(name.encode('ascii','backslashreplace').decode('ascii'),", embedded file" if b'/EF' in top else ""))
                 ef=top.get(b'/EF')
                 if type(ef)==tuple and ef[0]=='R':
                     self.efrefs[ef[1]]=name   # /EF 39 0 R: kulon obj, a vegen (name_files) oldjuk fel az efdicts-bol
