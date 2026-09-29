@@ -743,9 +743,14 @@ re_xreftype=re.compile(rb'/Type[\x00\t\n\x0c\r ]*/XRef\b')
 re_xrefkw=re.compile(rb'(?<![a-zA-Z])xref(?![a-zA-Z])')   # az 'xref' kulcsszo (a 'startxref' belseje nem!)
 # egy csak szamot tartalmazo obj ("12 0 obj 4567 endobj"): a hivatkozott /Length feloldasahoz
 re_lenobj=re.compile(rb'\d{1,10}[\x00\t\n\x0c\r ]{1,32}\d{1,10}[\x00\t\n\x0c\r ]{1,32}obj[\x00\t\n\x0c\r ]*(\d{1,10})[\x00\t\n\x0c\r ]*endobj')
+# MS Outlook TNEF (winmail.dat) alairasa: a csatolmanyok attributumokban vannak, a pdf elott az attAttachData
+# (0x800F, atpByte) fejlec all: szint(1) id(2) tipus(2) hossz(4, little endian), a pdf utan checksum(2) es a tobbi attributum
+TNEF_SIG=b'\x78\x9f\x3e\x22'
+
 # a %PDF header elotti szemet tipusa
 def junk_kind(j):
     if j[:3]==b'\xef\xbb\xbf': return 'UTF-8 BOM'
+    if j[:4]==TNEF_SIG: return 'TNEF container (MS Outlook winmail.dat), the PDF is an attachment in it'
     if j[:4]==b'rtfd': return 'RTFD package (macOS rich text with attachments)'
     if j[:4]==b'PK\x03\x04': return 'ZIP archive'
     if j[:4] in (b'\xd0\xcf\x11\xe0',): return 'OLE2 container (MS Office / msg)'
@@ -847,6 +852,17 @@ class PDFParser():
 
         p=d.find(b'%PDF-',0,1024)
         if p<0: p=d.find(b'%FDF-',0,1024)
+        if p<0 and d[:4]==TNEF_SIG:
+            # Outlook TNEF (winmail.dat) konteneres csatolmany: a pdf hossza az attributum fejlecbol ismert, a konteneren
+            # beluli tobbi adat (a pdf elott es utan) nem a pdf resze
+            m=re.search(rb'\x02\x0f\x80\x06\x00(....)%PDF-',d,re.S)
+            if m:
+                h=m.end()-5
+                L=int.from_bytes(m.group(1),'little')
+                if h+L<=len(d):
+                    d=self.d=d[:h+L]
+                    pend=len(d)
+                    print("TNEF: the PDF is an attachment of %d bytes in the container"%(L))
         if p<0:
             # a header az elso 1024 byte-on tul: az Acrobat nem, de mas nezok (pl. a macOS PDFKit) igy is megnyitjak,
             # pl. RTFD csomagba agyazott pdf. A tartalom kinyeres miatt ezt is feldolgozzuk (JUNK hiba).
