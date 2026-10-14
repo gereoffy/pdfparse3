@@ -834,7 +834,7 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
             filt=objs_value(objs,b'/Filter')
             parms=objs_decodeparms(objs)
 #            if filt: filt=b''.join(filt)
-            # 0D 0A 65 │ 6E 64 73 74 │ 72 65 61 6D │ 0D 0A
+            # 0D 0A 65 | 6E 64 73 74 | 72 65 61 6D | 0D 0A
             if p<pend and d[p] in [9,32]: p+=1 # skip whitepace after 'stream'
             if p<pend and d[p] in [13,10]: # skip CR/LF
                 if d[p]==13 and p+1<pend and d[p+1]==10: p+=1
