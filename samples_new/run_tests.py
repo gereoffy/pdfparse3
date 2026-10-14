@@ -126,6 +126,18 @@ check('12 uri_js content',n==0 and got==[('pdfstream.launch',b'/F javascript:voi
 # 13: TNEF (winmail.dat) kontener: a pdf a csatolmany-attributumban, a kontener tobbi resze nem szemet a %%EOF utan
 c,n,e=parse_quiet(load_s('tnef_container.pdf'))
 check('13 tnef container',n==10 and len(e)==1 and 'TNEF container' in e[0][1] and 'header beyond' in e[0][1] and sorted(nm for dd,nm in c)==['evil.exe','pdfstream.js','pdfstream.urls'],"%s %s"%(str(e),[nm for dd,nm in c]))
+# 12: titkositott pdf-ek ures felhasznaloi jelszoval (pypdf): a JS, az URL es a csatolmany visszafejtve, 0 hiba
+JS=b'app.alert("pypdf js");'; ATT=b'ATTACHMENT-DATA-'*4; URL=b'http://pypdf.example/u\n'
+for name,desc in (('12a_enc_rc4_40.pdf','V1 R2 RC4 40 bit'),('12b_enc_rc4_128.pdf','V2 R3 RC4 128 bit'),('12c_enc_aes128.pdf','V4 R4 AES 128 bit'),
+                  ('12d_enc_aes256_r5.pdf','V5 R5 AES 256 bit'),('12e_enc_aes256_r6.pdf','V5 R6 AES 256 bit'),('12g_enc_aes128_no_length.pdf','V4 R4 AES 128 bit')):
+    buf=io.StringIO()
+    with contextlib.redirect_stdout(buf): c,n,e=P.parse_pdf(load(name))
+    got={nm:bytes(d) for d,nm in c}
+    check(name[:3]+' decrypted content',n==0 and got.get('pdfstream.js')==JS and got.get('payload.bin')==ATT and got.get('pdfstream.urls')==URL,str([(nm,len(d)) for d,nm in c])+str(e))
+    check(name[:3]+' crypt message',('CRYPT: %s, empty user password: decrypting'%desc) in buf.getvalue(),str([l for l in buf.getvalue().splitlines() if l.startswith('CRYPT')]))
+buf=io.StringIO()
+with contextlib.redirect_stdout(buf): c,n,e=P.parse_pdf(load('12f_enc_userpw.pdf'))
+check('12f user password: not decrypted, no plaintext',n==0 and 'user password needed' in buf.getvalue() and not any(JS in bytes(d) or ATT in bytes(d) for d,nm in c),str([(nm,len(d)) for d,nm in c]))
 
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]

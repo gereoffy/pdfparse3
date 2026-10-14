@@ -167,3 +167,30 @@ write('11e_lf_damaged_body_binary_tail.pdf',d.replace(b'\r\n',b'\n')+b'\x00'*100
 #     startxref soraig tart, a javitas megtortenik, a "missing EOF" hiba (5) jogosan marad.
 d,_,_=build(BASE,comment=b'%comment',eol=b'\r\n',eof=False)
 write('11f_lf_damaged_body_no_eof_zero_tail.pdf',d.replace(b'\r\n',b'\n')+b'\x00'*200)
+
+# 12a-12g: titkositott pdf-ek (README 6.1, 10.12). NEM a build()-del, hanem pypdf-fel generalva (ha van): ures felhasznaloi
+#     jelszo + "owner" tulajdonosi jelszo, RC4-40 / RC4-128 / AES-128 / AES-256 R5 / AES-256 R6, es egy felhasznaloi
+#     jelszavas (12f, "secret": nem fejtheto vissza). Veletlen IV/so miatt csak akkor generalodnak, ha hianyoznak. 12g: a 12c, a felso szintu /Length nelkul (V4 AESV2: a kulcs akkor
+#     is 16 byte). Tartalom: JS OpenAction, URI link, payload.bin csatolmany.
+try:
+    import warnings; warnings.simplefilter('ignore')
+    from pypdf import PdfWriter
+    from pypdf.annotations import Link
+    JS='app.alert("pypdf js");'; ATT=b'ATTACHMENT-DATA-'*4; URL='http://pypdf.example/u'
+    def make_enc(name,alg,user=''):
+        if os.path.exists(os.path.join(HERE,name)): return   # (veletlen IV / so: a meglevo file-t nem irjuk felul)
+        w=PdfWriter(); w.add_blank_page(width=200,height=200)
+        w.add_js(JS); w.add_attachment('payload.bin',ATT)
+        w.add_annotation(page_number=0,annotation=Link(rect=(10,10,100,100),url=URL))
+        w.encrypt(user_password=user,owner_password='owner',algorithm=alg)
+        with open(os.path.join(HERE,name),'wb') as f: w.write(f)
+        print("%-45s %6d bytes (pypdf)"%(name,os.path.getsize(os.path.join(HERE,name))))
+    for alg,name in (('RC4-40','12a_enc_rc4_40.pdf'),('RC4-128','12b_enc_rc4_128.pdf'),('AES-128','12c_enc_aes128.pdf'),('AES-256-R5','12d_enc_aes256_r5.pdf'),('AES-256','12e_enc_aes256_r6.pdf')):
+        make_enc(name,alg)
+    make_enc('12f_enc_userpw.pdf','AES-128',user='secret')
+    if not os.path.exists(os.path.join(HERE,'12g_enc_aes128_no_length.pdf')):
+        d=open(os.path.join(HERE,'12c_enc_aes128.pdf'),'rb').read()
+        i=d.index(b'/Length 128')
+        write('12g_enc_aes128_no_length.pdf',d[:i]+b' '*11+d[i+11:])   # (ugyanannyi szokoz: az offsetek nem valtoznak)
+except ImportError:
+    print("(pypdf nincs: a 12a-12g titkositott mintak nem generalodnak ujra, a meglevok maradnak)")
