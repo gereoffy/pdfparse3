@@ -283,6 +283,19 @@ def gen_text():
         b'BT /F1 12 Tf 72 700 Td <0003000400050006000700080009000A000B000C000D000E000F00100011001200130014001500160017> Tj ET BT /F2 12 Tf 72 600 Td (visible) Tj ET',
         [(5,b'<< /Type /Font /Subtype /Type0 /BaseFont /G /Encoding /Identity-H /DescendantFonts [6 0 R] >>'),
          (6,b'<< /Type /Font /Subtype /CIDFontType2 /BaseFont /G /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>')])
+    # fedolap: az elso oldalon keves a szo, a kovetkezo oldalak hozzafuzodnek (minwords=100), amig a 100 szo meg nincs;
+    # a 2-4. oldal egy koztes /Pages csomopont alatt, annak orokolt /Resources-aval. A 4. oldal mar nem kell.
+    words=lambda w: ' '.join('%s%d'%(w,i) for i in range(60)).encode()
+    P['text_multipage']=build([cat,(2,b'<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 4 >>'),
+        (3,b'<< /Type /Page /Parent 2 0 R /Resources '+helv+b' /Contents 4 0 R >>'),
+        (4,st(b'',b'BT /F1 24 Tf 72 700 Td (Cover page) Tj ET')),
+        (5,b'<< /Type /Pages /Parent 2 0 R /Kids [6 0 R 8 0 R 10 0 R] /Count 3 /Resources '+helv+b' >>'),
+        (6,b'<< /Type /Page /Parent 5 0 R /Contents 7 0 R >>'),
+        (7,st(b'',b'BT /F1 8 Tf 72 700 Td ('+words('two')+b') Tj ET')),
+        (8,b'<< /Type /Page /Parent 5 0 R /Contents 9 0 R >>'),
+        (9,st(b'',b'BT /F1 8 Tf 72 700 Td ('+words('three')+b') Tj ET')),
+        (10,b'<< /Type /Page /Parent 5 0 R /Contents 11 0 R >>'),
+        (11,st(b'',b'BT /F1 12 Tf 72 700 Td (never shown) Tj ET'))])
     return P
 
 # szerkezeti hibak: szemet a header elott, csonka file, iro program altal elrontott xref

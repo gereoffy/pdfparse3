@@ -1,15 +1,17 @@
 #! /usr/bin/env python3
 
-# Az elso oldal szoveges tartalmanak kinyerese (pl. szoveg alapu spamszurohoz), a pdfparse3.PDFParser-re epitve.
+# Az elso oldal(ak) szoveges tartalmanak kinyerese (pl. szoveg alapu spamszurohoz), a pdfparse3.PDFParser-re epitve.
+# Ha az elso oldalon keves a szo (fedolap, logo, cim), a kovetkezo oldalak szovege is hozzafuzodik (minwords, MAXPAGES).
 # Python 3.8+ (pypy3 is), kulso fuggoseg nelkul.
 #
 #   import pdfparse3,pdf2str
 #   p=pdfparse3.PDFParser(d); p.parse()         # (a content / validate feldolgozas mellett)
 #   text=pdf2str.first_page_text(p)             # str, vagy None (nincs kinyerheto szoveg)
+#   text=pdf2str.first_page_text(p,minwords=0)  # csak az elso oldal
 #
 #   content,errcnt,errors,text=pdf2str.parse_pdf_text(d)    # parse_pdf() + a szoveg egyben
 #
-#   pdf2str.py file.pdf ...                     # parancssorbol: kiirja az elso oldal szoveget
+#   pdf2str.py file.pdf ...                     # parancssorbol: kiirja az elso oldal(ak) szoveget
 #
 # Ami mukodik: /ToUnicode CMap, WinAnsi / MacRoman / Standard kodolas /Differences-szel (glifnevek), Unicode alapu
 # elore definialt CMap-ek (UCS2 / UTF16), form XObject-ek, a titkositott file-ok (ha a parser visszafejtette), sorvegek
@@ -30,6 +32,8 @@ MAXDEPTH=8          # form XObject egymasba agyazas
 MAXOPS=2000000      # operator / oldal (a rajzokon a szoveg elott sok szazezer vonalrajzolo operator is lehet;
                     # pypy-vel kb. 1.5M operator/s, CPythonnal kb. 0.2M/s)
 MAXTEXT=100000      # karakter / oldal
+MAXPAGES=4          # legfeljebb ennyi oldal, ha az elsokon kevesebb a szo, mint a minwords
+MINWORDS=100        # (first_page_text alapertelmezes)
 
 # --- glifnev -> Unicode ------------------------------------------------------------------------------------------
 # A latin betuk nevei (aacute, ohungarumlaut ...) a Unicode nevbol generalva (Adobe Glyph List szerinti nevek), es
@@ -255,22 +259,33 @@ class Font():
         return self.widths.get(c,self.dw)
 
 # --- az oldal ----------------------------------------------------------------------------------------------------
-def first_page(p):
+# az oldalfa bejarasa sorrendben: [(oldal dict, /Resources (az orokolt is)), ...], legfeljebb maxn oldal
+def pages(p,maxn=1):
     root=p.deref(('R',p.root)) if p.root else None
     if type(root)!=dict and p.catalog: root=p.get_obj(p.catalog)[0]
-    if type(root)!=dict: return None,None
-    node=p.deref(root.get(b'/Pages'))
-    res=None
-    k=0
-    while type(node)==dict and node.get(b'/Type')!=b'/Page' and b'/Kids' in node and k<64:
+    if type(root)!=dict: return []
+    out=[]
+    seen=set()
+    nodes=[0]
+    def walk(node,res,depth):
+        if len(out)>=maxn or depth>64 or type(node)!=dict or nodes[0]>10000: return
+        nodes[0]+=1
         if b'/Resources' in node: res=node[b'/Resources']
-        kids=p.deref(node.get(b'/Kids'))
-        if type(kids)!=list or not kids: return None,None
-        node=p.deref(kids[0])
-        k+=1
-    if type(node)!=dict: return None,None
-    if b'/Resources' in node: res=node[b'/Resources']
-    return node,p.deref(res)
+        if node.get(b'/Type')!=b'/Page' and b'/Kids' in node:
+            kids=p.deref(node.get(b'/Kids'))
+            if type(kids)!=list: return
+            for k in kids:
+                if type(k)==tuple:
+                    if k[1] in seen: continue   # (hurok / tobbszor hivatkozott csomopont)
+                    seen.add(k[1])
+                walk(p.deref(k),res,depth+1)
+        else: out.append((node,p.deref(res)))
+    walk(p.deref(root.get(b'/Pages')),None,0)
+    return out
+
+def first_page(p):
+    r=pages(p,1)
+    return r[0] if r else (None,None)
 
 def _stream_data(p,ref):
     if type(ref)==tuple:
@@ -439,28 +454,43 @@ def _clean(text):
     t=re.sub(r' *\n[ \n]*','\n',t).strip()
     return t or None
 
-# errors: ha lista, egy kivetel eseten ide kerul a traceback (roviditve), pl. tomeges teszteleshez (pdfscan); a
-# visszateresi ertek ilyenkor is None
-def first_page_text(p,maxops=MAXOPS,errors=None):
-    try:
-        page,res=first_page(p)
-        if page is None: return None
-        c=page.get(b'/Contents')
-        data=b'\n'.join(_stream_data(p,x) for x in (p.deref(c) if type(p.deref(c))==list else [c]))
-        res=res if type(res)==dict else {}
+def page_text(p,page,res,maxops=MAXOPS):
+    c=page.get(b'/Contents')
+    data=b'\n'.join(_stream_data(p,x) for x in (p.deref(c) if type(p.deref(c))==list else [c]))
+    res=res if type(res)==dict else {}
+    pg=_Page(p,maxops)
+    pg.run(data,res,(1,0,0,1,0,0),0,set())
+    if _identity_fonts(pg.fonts):
+        fonts=pg.fonts
         pg=_Page(p,maxops)
+        pg.fonts=fonts
         pg.run(data,res,(1,0,0,1,0,0),0,set())
-        if _identity_fonts(pg.fonts):
-            fonts=pg.fonts
-            pg=_Page(p,maxops)
-            pg.fonts=fonts
-            pg.run(data,res,(1,0,0,1,0,0),0,set())
-        return _clean(''.join(pg.out))
-    except Exception:   # (szandekosan rontott pdf se allitsa le a hivot: a szoveg ilyenkor nincs)
+    return _clean(''.join(pg.out))
+
+# Az elso oldal szovege; ha abban kevesebb a szo, mint a minwords (fedolap: cim, logo, nehany szo), a kovetkezo
+# oldalak szovege is hozzafuzodik (sortoressel), amig a minwords meg nincs, legfeljebb maxpages oldalig.
+# minwords=0: csak az elso oldal.
+# errors: ha lista, egy kivetel eseten ide kerul a traceback (roviditve), pl. tomeges teszteleshez (pdfscan); a hibas
+# oldal szovege kimarad (a tobbie megmarad), ha egyik sincs: None
+def first_page_text(p,maxops=MAXOPS,errors=None,minwords=MINWORDS,maxpages=MAXPAGES):
+    out=[]
+    words=0
+    try: pl=pages(p,max(1,maxpages if minwords>0 else 1))
+    except Exception:
         if errors is not None: errors.append(traceback.format_exc()[-2000:])
         return None
+    for page,res in pl:
+        try: t=page_text(p,page,res,maxops)
+        except Exception:   # (szandekosan rontott pdf se allitsa le a hivot: a szoveg ilyenkor nincs)
+            if errors is not None: errors.append(traceback.format_exc()[-2000:])
+            t=None
+        if t:
+            out.append(t)
+            words+=len(t.split())
+        if words>=minwords: break
+    return '\n'.join(out) or None
 
-# parse_pdf() + az elso oldal szovege egy menetben
+# parse_pdf() + az elso oldal(ak) szovege egy menetben
 def parse_pdf_text(d,debug=False,validate=False):
     p=pdfparse.PDFParser(d,debug,validate)
     if not p.parse(): return None,99,[(99,"not pdf")],None

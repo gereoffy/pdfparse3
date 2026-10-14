@@ -70,6 +70,7 @@ EXPECTED={
     'text_inline_image':   (0, 0, [], []),
     'text_identity_cid':   (0, 0, [], []),
     'text_gid_cid':        (0, 0, [], []),
+    'text_multipage':      (0, 0, [], []),
     'text_encrypted':      (0, 0, [('pdfstream.js',b'app.alert("encrypted js");'),('secret.exe',b'MZ secret attachment')], []),
     'uri_js':              (0, 0, [('pdfstream.launch',b'/F javascript:void(0)')],
                             [('pdfstream.uri.js',b'app.alert(1)'),('pdfstream.uri.js',b"var x=window.open('/a')")]),   # (+ pdfstream.urls, l. test_urls)
@@ -167,6 +168,8 @@ TEXT={'text_tounicode':'\u00c1rv\u00edzt\u0171r\u0151\nt\u00fck\u00f6rf\u00far\u
       'text_identity_cid':'Unicode identity text',               # /ToUnicode nelkuli Identity-H, kod = Unicode
       'text_gid_cid':'visible',                                  # glif-azonositok /ToUnicode nelkul: kimaradnak
       'text_encrypted':'encrypted',                              # AES, ures felhasznaloi jelszo
+      'text_multipage':'Cover page\n'+' '.join('two%d'%i for i in range(60))+'\n'+' '.join('three%d'%i for i in range(60)),
+                                                                 # fedolap: + a kovetkezo oldalak a 100 szoig
       'basic':None,'notpdf':None}                                # (nincs szoveg / nem pdf)
 
 def test_text():
@@ -175,6 +178,12 @@ def test_text():
         with contextlib.redirect_stdout(io.StringIO()):
             c,e,errs,text=pdf2str.parse_pdf_text(SAMPLES[name])
         assert text==want, (name,text)
+    # minwords=0: csak az elso oldal; minwords=1000: legfeljebb MAXPAGES (4) oldal
+    p=pdfparse.PDFParser(SAMPLES['text_multipage'])
+    with contextlib.redirect_stdout(io.StringIO()): p.parse()
+    assert pdf2str.first_page_text(p,minwords=0)=='Cover page'
+    assert pdf2str.first_page_text(p,minwords=1000).endswith('\nnever shown')
+    assert pdf2str.first_page_text(p,minwords=1000,maxpages=2).count('\n')==1
 
 def test_encrypted():
     # Standard security handler: ures felhasznaloi jelszoval visszafejtve (RC4 / AES-128 / AES-256), a jelszavas nem
