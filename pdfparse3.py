@@ -924,6 +924,87 @@ re_complete_tail=re.compile(rb'startxref[\x00\t\n\x0c\r ]+\d+[\x00\t\n\x0c\r ]*(
 def top_dict(objs):
     return objs_dict(objs,3) if len(objs)>3 and objs[3]=='<' else {}
 
+# a tokenlista i. elemetol kezdodo ertek teljes szerkezete (a beagyazott dict-ek es tombok is, az objs_dict-tel
+# ellentetben): dict / list / int / szam bytes-kent (b'14.4') / nev (b'/Name') / PDFString / ('R',oid) / kulcsszo.
+# return: (ertek, a kovetkezo index). A melyseg korlatozott (rosszindulatu, nagyon melyen beagyazott adat ellen).
+def objs_tree(objs,i,depth=0):
+    if i>=len(objs): return None,i
+    t=objs[i]
+    if t=='<' or t=='[':
+        if depth>=64: return None,len(objs)
+        close='>' if t=='<' else ']'
+        i+=1
+        if t=='<':
+            v={}
+            while i<len(objs) and objs[i]!=close:
+                k=objs[i]
+                i+=1
+                if not (type(k)==bytes and k.startswith(b'/')): continue   # (hibas kulcs: atugorjuk)
+                if i>=len(objs) or objs[i]==close:
+                    v[k]=None
+                    break
+                v[k],i=objs_tree(objs,i,depth+1)
+        else:
+            v=[]
+            while i<len(objs) and objs[i]!=close:
+                x,i=objs_tree(objs,i,depth+1)
+                v.append(x)
+        return v,i+1
+    if type(t)==int and i+2<len(objs) and type(objs[i+1])==int and objs[i+2]==b'R': return ('R',t),i+3
+    return t,i+1
+
+re_number=re.compile(rb'[+-]?(\d+\.?\d*|\.\d+)$')
+
+# szam ertek (int, vagy a lexer altal bytes-kent adott valos szam), kulonben a default
+def num(v,default=0):
+    if type(v)==int: return v
+    if type(v)==bytes and re_number.match(v):
+        try: return float(v)
+        except ValueError: pass
+    return default
+
+# content stream operatorai: (operator, [operandusok]) parok, az operandusok objs_tree ertekek (a TJ tombje lista, a
+# BDC dict-je dict). Az inline kep (BI ... ID <binaris adat> EI) egyben: (b'BI', [kep dict, nyers adat]); a binaris
+# adatot nem tokenizaljuk (a lexer egy benne levo '(' miatt a stream hatralevo reszet stringnek vehetne).
+def content_ops(d,maxops=1000000):
+    p=0
+    n=len(d)
+    toks=[]
+    img=None
+    nops=0
+    while p<n and nops<maxops:
+        p2,t=parse_pdf_param(d,p,n,err=lambda m: None)
+        if p2<=p: break
+        p=p2
+        if t is None: continue
+        if type(t)==bytes and not t.startswith(b'/') and t not in (b'true',b'false',b'null') and not re_number.match(t):
+            ops=[]
+            i=0
+            while i<len(toks):
+                v,i=objs_tree(toks,i)
+                ops.append(v)
+            toks=[]
+            nops+=1
+            if t==b'BI':
+                img=ops
+                continue
+            if t==b'ID':
+                # az ID utan egy whitespace, az adat vege az "EI" (elotte es utana whitespace / adat vege). PDF 2.0: /L
+                dic={}
+                for k in range(0,len(ops)-1,2):
+                    if type(ops[k])==bytes: dic[ops[k]]=ops[k+1]
+                q=p+1 if p<n and d[p] in WHITESPACE else p
+                L=dic.get(b'/L',dic.get(b'/Length'))
+                m=re.compile(rb'[\x00\t\n\x0c\r ]EI(?=[\x00\t\n\x0c\r ]|$)').search(d,q+(L if type(L)==int and L>0 else 0))
+                e=m.start() if m else n
+                yield b'BI',[dic,d[q:e]]
+                p=m.end() if m else n
+                img=None
+                continue
+            yield t,ops
+        else:
+            toks.append(t)
+
 # pdf szoveg (PDFDocEncoding / UTF-16 BOM-mal) -> utf-8 byte-ok, olvashato kiirashoz / tartalomhoz
 def text_bytes(b):
     if b.startswith(b'\xfe\xff') or b.startswith(b'\xff\xfe'): return b.decode('utf-16','replace').encode('utf-8')
@@ -945,6 +1026,10 @@ class PDFParser():
         self.encrypt=0
         self.crypt=None     # visszafejtes (ures felhasznaloi jelszoval): {'key','n','stm','str','metadata'}, l. setup_crypt
         self.fileid=None    # a trailer /ID elso eleme (a kulcs szamitasahoz)
+        self.objcache={}    # get_obj: oid -> (ertek, stream)
+        self.root=None      # a (legfrissebb) trailer /Root obj-e
+        self.catalog=None   # az utolso /Type /Catalog obj (ha nincs hasznalhato trailer)
+        self.stmcache={}    # get_obj: objstm oid -> {oid: tokenlista}
         self.xref={}        # oid -> (offset,gen)          ASCII xref tabla, vagy binaris xref type=1
         self.badxref=set()  # az xref-ben rossz pozicioval szereplo oid-k
         self.xref_stream_oids=set() # az xref streamek obj szamai
@@ -1303,6 +1388,9 @@ class PDFParser():
                 if self.debug: print("CRYPT: "+str(self.encrypt))
                 i=objs.index(b'/ID')+1 if b'/ID' in objs else len(objs)
                 if i+1<len(objs) and objs[i]=='[' and type(objs[i+1])==PDFString: self.fileid=objs[i+1].get()
+            if self.root is None and b'/Root' in objs:
+                i=objs.index(b'/Root')
+                if i+3<len(objs) and type(objs[i+1])==int and objs[i+3]==b'R': self.root=objs[i+1]
             if objs[0]==b'xref':
                 self.parse_xref_table(objs)
             elif b'/XRef' in objs and stream:
@@ -2054,6 +2142,7 @@ class PDFParser():
                 print("LAUNCH: "+str(target))
                 self.add_content(target,"pdfstream.launch")
 
+        if top.get(b'/Type')==b'/Catalog': self.catalog=oid
         if top.get(b'/Type')==b'/Page': self.pagecnt+=1
         if top.get(b'/Type')==b'/Pages' and type(top.get(b'/Count'))==int:
             if self.pagenum==None or top[b'/Count']>self.pagenum: self.pagenum=top[b'/Count']  # a gyoker /Pages-ben van a teljes szam
@@ -2103,6 +2192,57 @@ class PDFParser():
             else:
                 urls.append(u)
         if urls: self.add_content(b'\n'.join(urls)+b'\n',"pdfstream.urls")
+
+    # --- obj eleres a feldolgozas utan (pl. szoveg / kep kinyereshez): ---
+    # egy obj erteke (objs_tree) es streamje (PDFStream, a titkositas mar visszafejtve) az obj szama alapjan: a file-ban
+    # levo obj (a dom szerinti, utolso valtozat), vagy egy object stream tagja. Nem talalt obj: (None, None).
+    def get_obj(self,oid):
+        if oid in self.objcache: return self.objcache[oid]
+        self.objcache[oid]=(None,None)   # (korkoros hivatkozas ellen)
+        r=(None,None)
+        if oid in self.dom:
+            objp,end=self.dom[oid]
+            q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',err=lambda m: None,lenref=self.resolve_length)
+            if self.crypt and oid!=self.encrypt: self.decrypt_obj(oid,objs,stream)
+            if len(objs)>3 and objs[2]==b'obj': r=(objs_tree(objs,3)[0],stream)
+        else:
+            stm=self.xref_stm.get(oid,(None,))[0]
+            if stm is None:
+                stm=next((x for x,ids in self.objstm.items() if oid in ids),None)
+            if stm is not None:
+                toks=self.objstm_members(stm).get(oid)
+                if toks: r=(objs_tree(toks,0)[0],None)
+        self.objcache[oid]=r
+        return r
+
+    # egy object stream tagjai: {oid: tokenlista} (a hibakat itt nem szamoljuk, azt a parse_objstm mar megtette)
+    def objstm_members(self,stm):
+        if stm in self.stmcache: return self.stmcache[stm]
+        self.stmcache[stm]={}
+        top,stream=self.get_obj(stm)
+        if type(top)!=dict or stream is None or self.opaque(): return {}
+        dd=bytes(stream.decode(predictor=True))
+        first=top.get(b'/First')
+        if type(first)!=int or first<0 or first>len(dd): return {}
+        hdr=dd[:first].split()
+        try: pairs=[(int(hdr[k]),int(hdr[k+1])) for k in range(0,len(hdr)-1,2)]
+        except ValueError: return {}
+        offs=sorted(set(o for x,o in pairs))
+        nxt={o:(offs[i+1] if i+1<len(offs) else len(dd)-first) for i,o in enumerate(offs)}
+        res={}
+        for x,o in pairs:
+            q,toks,ss=parse_pdf_obj(dd,first+o,first+nxt[o],err=lambda m: None)
+            res[x]=toks
+        self.stmcache[stm]=res
+        return res
+
+    # hivatkozas feloldasa: ('R',oid) -> az obj erteke (a lancot is kovetve), mas ertek valtozatlan
+    def deref(self,v):
+        k=0
+        while type(v)==tuple and len(v)==2 and v[0]=='R' and k<32:
+            v=self.get_obj(v[1])[0]
+            k+=1
+        return v
 
     # a /JS 12 0 R altal hivatkozott obj-ek (stream vagy string) kinyerese
     def resolve_js(self):
