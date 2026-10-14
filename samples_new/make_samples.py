@@ -213,3 +213,27 @@ try:
         print("13c_text_content_aes128.pdf (pypdf)")
 except ImportError:
     pass
+
+# 14: a pdf2str (szovegkinyeres) robusztussagi mintai (README 10.13):
+#  14a: a Tf operandusa nem nev, hanem tomb ("[1 2] 12 Tf"): a fonts.get(lista) TypeError-t dobott, a parse_pdf_text elszallt
+#  14b: a Do operandusa dict ("<</a 1>> Do"), es van /XObject eroforras: ugyanaz az xo.get-nel
+#  14c: /ToUnicode CMap, amelyben egy bfchar (<41> -> 'H') utan egy tulcsordulo bfrange all (<f0> <ff> <fa>: egybyte-os
+#       cel, a 0xfa+15 nem fer el): az OverflowError miatt az egesz CMap elveszett, az 'A' nem lett 'H'
+#  Elvart: 14a/14b: nincs kivetel, a szoveg tartalmazza az "ok"-t; 14c: a szoveg "H".
+TEXTPAGE=lambda extra: [(1,b'<</Type/Catalog/Pages 2 0 R>>'),(2,b'<</Type/Pages/Kids[3 0 R]/Count 1>>'),
+    (3,b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<</Font<</F1 5 0 R>>'+extra+b'>>/Contents 4 0 R>>')]
+d,_,_=build(TEXTPAGE(b'')+[(4,stream(b'<<>>',b'BT [1 2] 12 Tf (bad) Tj ET BT /F1 12 Tf (ok) Tj ET')),
+    (5,b'<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>')])
+write('14a_pdf2str_tf_array_operand.pdf',d)
+d,_,_=build(TEXTPAGE(b'/XObject<</X1 6 0 R>>')+[(4,stream(b'<<>>',b'q <</a 1>> Do Q BT /F1 12 Tf (ok) Tj ET')),
+    (5,b'<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>'),
+    (6,stream(b'<</Type/XObject/Subtype/Form/BBox[0 0 10 10]>>',b'0 0 1 1 re f'))])
+write('14b_pdf2str_do_dict_operand.pdf',d)
+cmap=(b'/CIDInit /ProcSet findresource begin begincmap /CMapName /T def\n'
+      b'1 begincodespacerange <00> <ff> endcodespacerange\n'
+      b'1 beginbfchar <41> <0048> endbfchar\n'
+      b'1 beginbfrange <f0> <ff> <fa> endbfrange\n'
+      b'endcmap CMapName currentdict /CMap defineresource pop end end\n')
+d,_,_=build(TEXTPAGE(b'')+[(4,stream(b'<<>>',b'BT /F1 12 Tf (A) Tj ET')),
+    (5,b'<</Type/Font/Subtype/Type1/BaseFont/Helvetica/ToUnicode 6 0 R>>'),(6,stream(b'<<>>',cmap))])
+write('14c_pdf2str_bfrange_overflow.pdf',d)

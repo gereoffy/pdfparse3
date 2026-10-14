@@ -162,6 +162,22 @@ check('objs_tree nested',i==len(objs) and v[b'/A']==1 and v[b'/B'][1]==('R',2) a
 check('num',(P.num(b'14.4'),P.num(b'-.5'),P.num(7),P.num(b'x',-1))==(14.4,-0.5,7,-1))
 ops=list(P.content_ops(b'/Span <</MCID 3>> BDC (a(b)c) Tj BI /W 3 /L 3 ID EI  EI (unterminated\n1 0 0 RG\n'))
 check('content_ops BDC/nested string/inline image with /L/unterminated string',[op for op,a in ops]==[b'BDC',b'Tj',b'BI',b'RG'] and ops[0][1][1]=={b'/MCID':3} and pstr(ops[1][1][0])==b'a(b)c' and ops[2][1][1]==b'EI ' and pstr(ops[3][1][0])==b'unterminated' and ops[3][1][1:]==[1,0,0],str(ops))   # (a lezaratlan string a sor vegen zarul, es operandus lesz)
+# 14: pdf2str robusztussag (ha a modul elerheto): rossz operandusok nem okozhatnak kivetelt, a tulcsordulo bfrange
+#     nem veszitheti el a CMap tobbi bejegyzeset
+try:
+    import pdf2str
+except ImportError:
+    pdf2str=None
+if pdf2str:
+    def text_of(name):
+        with contextlib.redirect_stdout(io.StringIO()):
+            try: return pdf2str.parse_pdf_text(load(name))[3]
+            except Exception as ex: return 'EXCEPTION: '+repr(ex)
+    t=text_of('14a_pdf2str_tf_array_operand.pdf'); check('14a Tf with array operand: no exception, text found',type(t)==str and 'ok' in t and not t.startswith('EXCEPTION'),repr(t))
+    t=text_of('14b_pdf2str_do_dict_operand.pdf'); check('14b Do with dict operand: no exception, text found',type(t)==str and 'ok' in t and not t.startswith('EXCEPTION'),repr(t))
+    t=text_of('14c_pdf2str_bfrange_overflow.pdf'); check('14c bfrange overflow keeps the bfchar mapping',t=='H',repr(t))
+    for name,exp in (('13a_text_content_raw.pdf','HelloWorld'),('13b_text_content_flate.pdf','HelloWorld'),('13c_text_content_aes128.pdf','HelloWorld')):
+        t=text_of(name); check(name[:3]+' pdf2str text',t==exp,repr(t))
 
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
