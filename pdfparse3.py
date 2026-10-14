@@ -1780,9 +1780,18 @@ class PDFParser():
         meta=top.get(b'/EncryptMetadata')!=b'false'
         cfm=objs_value(objs,b'/CFM')
         cfm=cfm[0] if type(cfm)==list and cfm else cfm
-        method=lambda f: 'none' if f==b'/Identity' else 'aes' if cfm in (b'/AESV2',b'/AESV3') else 'rc4'
+        # (/StmF /StrF alapertelmezese a spec szerint /Identity: nincs titkositva)
+        method=lambda f: 'none' if f is None or f==b'/Identity' else 'aes' if cfm in (b'/AESV2',b'/AESV3') else 'rc4'
         stm=method(top.get(b'/StmF')) if V>=4 else 'rc4'
         strf=method(top.get(b'/StrF')) if V>=4 else 'rc4'
+        # V4: a kulcshossz a crypt filter /Length-e (byte-ban, egyes irok bitben), ha van; AESV2-nel mindig 16 byte
+        # (a felso szintu /Length elmaradhat, az alapertelmezett 40 bit itt rossz lenne)
+        cfl=None
+        if V>=4 and b'/CFM' in objs:
+            i=objs.index(b'/CFM')
+            if b'/Length' in objs[i:i+8]:
+                v=objs[i+objs[i:i+8].index(b'/Length')+1]
+                if type(v)==int and v>0: cfl=v if v<=32 else v//8
         if top.get(b'/Filter')!=b'/Standard' or not R:
             print("CRYPT: unsupported security handler %s R=%s, not decrypted"%(str(top.get(b'/Filter')),str(R)))
             return
@@ -1790,6 +1799,8 @@ class PDFParser():
         n=32
         if R<=4:
             n=5 if R==2 else max(5,min(16,L//8 if L>=40 else L))   # (/Length bitben; egyes irok byte-ban adjak meg)
+            if cfl: n=max(5,min(16,cfl))
+            if cfm==b'/AESV2': n=16
             if self.fileid is None:
                 print("CRYPT: missing /ID, not decrypted")
                 return
