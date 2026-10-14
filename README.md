@@ -78,6 +78,32 @@ Két osztály van. A **sérülés** (`DAMAGE` = 10 súly) azt jelenti, hogy a f�
 
 A `TRANSFER`, `GAP`, `TRUNCATED`, `CORRUPT`, `ENCODED` és a `JUNK`-magyarázatok a lista **elejére** kerülnek (`errors.insert(0, ...)`), mert ezek magyarázzák a többi hibát.
 
+### 2.5 A pontozás kalibrálása (tanulságok)
+
+A súlyok és a sérülés / figyelmeztetés határ nem elméleti: valós PDF-eken, megjelenítőkkel ellenőrizve alakultak ki. Az alapkérdés a validálásnál az, hogy **a fájl megsérült-e** (tárolás, másolás, átvitel közben), nem az, hogy az előállító program mennyire tartotta be a szabványt.
+
+Az ellenőrzés módja: egy kb. 5900 egyedi PDF-es helyi korpusz minden hibásnak jelzett fájlja (és kontrollként 300 hibátlan) hat motorral: **PDFKit** (macOS Preview), **PDFium** (a Chrome beépített nézője), **MuPDF**, **qpdf**, **pypdf**, **pdfminer**; a kétes eseteket (36 fájl és néhány kézzel módosított változat) **Acrobat Reader**-ben (macOS) kézzel. Mellette két szerver kb. 240 ezer, ill. 80 ezer egyedi PDF-jének naplója (`pdfscan.py`).
+
+| Eset | Mit mutattak a megjelenítők | Besorolás |
+|---|---|---|
+| Az író program hibái (rossz `/Length`, hibás xref-bejegyzések, hiányzó `%%EOF`, rossz szintaxis) | mind megnyitja; pl. egy szkenner minden képstreamjébe +215 byte-os `/Length`-et ír, több száz fájlban | figyelmeztetés, összesen legfeljebb 9 pont (a sok egyforma hiba se emelje sérüléssé) |
+| Csonka fájl (`TRUNCATED`) | nem nyílik meg, vagy hiányoznak oldalak; ha csak a záró xref / trailer hiányzik, minden oldal megjelenik | sérülés (a másolat akkor is csonka; az üzenet jelzi, ha a tartalom helyreállítható) |
+| Sérült tömörített adat a stream közepén (zlib `Error -3`, `CORRUPT`) | az Acrobat hibaüzenet nélkül üres oldalt mutat, vagy betűkészlet- / képhibát jelez | sérülés |
+| adler32-eltérés teljes deflate-adattal | ha csak a checksum alsó 16 bitje rossz (a felső, futó összeg stimmel), minden oldal jó: az író program hibája (egy program minden streamje ilyen); ha az egész checksum más, az Acrobat kép- vagy oldalhibát ad | alsó 16 bit: figyelmeztetés; különben `CORRUPT` |
+| Sorvége-sérülés (`TRANSFER`, l. 8.1) bináris fájlban, a stream-adat is megváltozott | képhiba („Insufficient data for an image”), üres kép | sérülés |
+| Ugyanez, de minden stream hossza stimmel és mind kibontható | hibátlan (a konverzió csak a szöveges szerkezetet érte); tisztán szöveges fájl visszaalakítva bájtra pontos | figyelmeztetés (5) |
+| Szemét a `%PDF` előtt, a fejléc az első 1024 byte-on belül (BOM, HTML, MIME-fejléc, szöveg, MacBinary) | mind megnyitja | figyelmeztetés (5) |
+| Ugyanez, a fejléc 1024 byte-on túl (le nem bontott TNEF, RTFD, mbox) | az Acrobat és a Chrome nem nyitja meg | sérülés |
+| Csonkolás nélkül felülírt fájl (egy teljes PDF után egy régebbi változat vége a saját xref-jével) | az Acrobat és a PDFKit nem nyitja meg (a végéről olvasva a rossz xref-et találják), a PDFium / MuPDF helyreállítja | sérülés |
+| HTML vagy régi adat maradéka a `%%EOF` után, saját xref nélkül | mind megnyitja | figyelmeztetés |
+| Dekódolatlan quoted-printable csatolmány (`ENCODED`) | egyik sem nyitja meg | sérülés |
+
+Érdekesség: a macOS-es Acrobat Reader a fejléc előtti HTML-ben bárhol álló `<!`-re (`<!--`, `<!DOCTYPE`) elutasította a fájlt (a `<!` nélkül megnyitotta, a `%%EOF` után vagy a PDF belsejében nem zavarta); minden más megjelenítő kezeli, ezért nem sérülés.
+
+A titkosított fájlok: a helyi korpusz 160 titkosított PDF-jéből 135 csak tulajdonosi jelszóval védett, ezeket az üres felhasználói jelszóval visszafejtjük; a visszafejtés a qpdf-fel mind a 135 fájlon egyezik (807 stream bájtra azonos).
+
+A hatás: az egyik szerveren a régi összegző pontozással 1046 fájl számított sérültnek, a kalibrált pontozással kb. 380 (a naplóból becsülve); a különbség zöme az író programok hibája volt (minden megjelenítő megnyitotta).
+
 ## 3. A feldolgozás menete (`PDFParser.parse`, 813. sor)
 
 ```
@@ -266,6 +292,24 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 | `GAP: N bytes missing/inserted inside the stream at offset ...` | `check_gap` (1260) | Minden rossz xref-bejegyzés **ugyanannyival** csúszik, és egy korábbi stream hossza pont ennyivel tér el: sérült másolás egy stream belsejében. |
 | `JUNK: N bytes before the %PDF header (...)` | `junk_kind` (724) | UTF-8 BOM, RTFD, ZIP, OLE2, RTF, MacBinary, HTML, MIME-fejlécek, szöveg vagy bináris a fejléc előtt. Ha az offsetek a fejléchez relatívak, `base` beállítása; súlya 5, ha a fejléc az első 1024 byte-on belül van, különben 10. *Érdekesség:* egy macOS-es Acrobat Reader a fejléc előtti HTML-ben bárhol álló `<!`-re (`<!--`, `<!DOCTYPE`) 1024 byte-on belül is elutasította a fájlt (a `<!` nélkül megnyitotta; a `%%EOF` után vagy a PDF belsejében nem zavarta). Minden más megjelenítő és parser kezeli, ezért nem sérülés; más Acrobat-verziókkal és operációs rendszereken még ellenőrizni kell. |
 | `JUNK: N bytes after %%EOF (HTML)` | `parse` | HTML a PDF után (poliglott fájl); tartalomként is kiadja. |
+
+### 8.1 A sorvége-sérülés (`TRANSFER`) eredete
+
+A `CRLF -> LF` sérülés tipikus forrása **nem a tárolás, hanem egy e-mail csatolmány hibás dekódolása**. Egyes programok (pl. számlázó rendszerek) a PDF-et quoted-printable kódolással küldik base64 helyett. A QP-ben a „kemény” sortörés a kanonikus CRLF-et jelenti, a bináris adat magányos CR / LF byte-jai pedig `=0D` / `=0A` alakban szerepelnek, így a PDF bájtra pontosan visszaállítható. Az a dekóder viszont, amely a kemény sortörést a helyi sorvégre (LF) alakítja, a PDF-ből kiveszi azokat a CR-eket, amelyek CRLF-ként a sorok végén álltak. Ilyen:
+
+- a **Thunderbird** a csatolmány mentésekor (macOS-en és Linuxon; a fejlesztők álláspontja szerint ez RFC-szerű viselkedés, a Mozilla 630571-es hibajegye „WORKSFORME” lezárással),
+- a Python **`email`** csomagja (`get_payload(decode=True)`), ha a levél LF-re normalizált mbox-ból jön.
+
+A javítás a dekódoló oldalon van: QP-kódolt bináris (pl. `application/pdf`) csatolmánynál a kemény sortörés CRLF, azaz CR nélküli levélnél a dekódolás előtt a magányos LF-ekből CRLF lesz:
+
+```python
+if b'\r' not in body: body=body.replace(b'\n',b'\r\n')
+data=binascii.a2b_qp(body)
+```
+
+A már sérült PDF-ből a visszaalakítás csak akkor biztos, ha a fájl tisztán szöveges (az `eol_repair` ezt teszi); bináris fájlnál, ill. vegyes eredeti sorvégeknél nem, ott az eredeti levélből kell újra kibontani. Az egyik e-mailes szerveren a mellékletek között 217 ilyen `CRLF -> LF` sérült PDF volt; a `TRANSFER`-esek kb. felénél a konverzió a stream-adatot nem érte el (figyelmeztetés), a többinél a képek / tömörített adat is sérült.
+
+A fordított irány (`LF -> CRLF`) szöveges módú átvitel nyoma (ASCII módú FTP, egyes levelezőátjárók); tisztán szöveges fájlnál (pl. ASCII85-kódolt streamekkel) az `eol_repair` bájtra pontosan visszaalakítja.
 
 ## 9. Ismert tervezési korlátok
 
