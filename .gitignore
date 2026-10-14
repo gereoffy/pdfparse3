@@ -5,3 +5,9 @@ samples_private
 # python
 __pycache__/
 *.pyc
+
+# pdfscan.py kimenetei: a files.txt teljes utvonalakat tartalmaz, a naplok is helyiek
+files.txt
+*files.txt
+*.jsonl
+*.jsonl.gz

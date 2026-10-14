@@ -20,6 +20,7 @@
 
 import re
 import sys
+import traceback
 import unicodedata
 
 import pdfparse3 as pdfparse
@@ -410,7 +411,9 @@ def _clean(text):
     t=re.sub(r' *\n[ \n]*','\n',t).strip()
     return t or None
 
-def first_page_text(p,maxops=MAXOPS):
+# errors: ha lista, egy kivetel eseten ide kerul a traceback (roviditve), pl. tomeges teszteleshez (pdfscan); a
+# visszateresi ertek ilyenkor is None
+def first_page_text(p,maxops=MAXOPS,errors=None):
     try:
         page,res=first_page(p)
         if page is None: return None
@@ -426,6 +429,7 @@ def first_page_text(p,maxops=MAXOPS):
             pg.run(data,res,(1,0,0,1,0,0),0,set())
         return _clean(''.join(pg.out))
     except Exception:   # (szandekosan rontott pdf se allitsa le a hivot: a szoveg ilyenkor nincs)
+        if errors is not None: errors.append(traceback.format_exc()[-2000:])
         return None
 
 # parse_pdf() + az elso oldal szovege egy menetben

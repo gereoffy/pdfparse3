@@ -166,7 +166,7 @@ Tipikus használat: `cat = pdf.deref(('R', pdf.root))`, `pages = pdf.deref(cat[b
 
 Külön modul (a két alapfelhasználáshoz – validálás, vírusszűrés – nem kell), az első oldal szövegét adja (pl. szöveg alapú spamszűrőhöz), a 4.4-es objektum-eléréssel, külső függőség nélkül:
 
-- `first_page_text(pdf, maxops=MAXOPS)`: egy már lefuttatott (`parse()`) `PDFParser`-ből; `str`, vagy `None`, ha nincs kinyerhető szöveg. `parse_pdf_text(d)`: `parse_pdf()` és a szöveg egy menetben: `(content, errcnt, errors, text)`. Parancssorból: `pdf2str.py fájl.pdf ...` kiírja az első oldal szövegét. Nem dob kivételt: hibás operandus (`[1 2] 12 Tf`, `<<...>> Do`) vagy hibás CMap-blokk esetén a szöveg hiányos vagy `None`, a hívó nem áll le (minták: `samples_new/14a–14c`).
+- `first_page_text(pdf, maxops=MAXOPS, errors=None)`: egy már lefuttatott (`parse()`) `PDFParser`-ből; `str`, vagy `None`, ha nincs kinyerhető szöveg. Kivételt nem dob (szándékosan rontott PDF se állítsa le a hívót); ha az `errors` lista, a kivétel tracebackje ebbe kerül (tömeges teszteléshez, l. `pdfscan.py`). `parse_pdf_text(d)`: `parse_pdf()` és a szöveg egy menetben: `(content, errcnt, errors, text)`. Parancssorból: `pdf2str.py fájl.pdf ...` kiírja az első oldal szövegét. Nem dob kivételt: hibás operandus (`[1 2] 12 Tf`, `<<...>> Do`) vagy hibás CMap-blokk esetén a szöveg hiányos vagy `None`, a hívó nem áll le (minták: `samples_new/14a–14c`).
 - Első oldal: Root → Pages → Kids bejárás, az öröklött `/Resources`-szel. A `/Contents` stream(ek) a `content_ops`-szal; szövegoperátorok (`Tf`, `Tj`, `TJ`, `'`, `"`), a szöveg- és sormátrix (`Td`, `TD`, `T*`, `Tm`, `TL`, `Tc`, `Tw`, `Tz`) és a `cm`/`q`/`Q`: a sortörés a függőleges, a szóköz a vízszintes elmozdulásból (a karakterszélesség a font `/Widths`-éből, ill. a CID font `/W` / `/DW` értékéből), és a `TJ` nagy (−180 alatti) kerningjéből. Form XObject (`Do`) rekurzívan, mélység- és körkorláttal.
 - Fontok: `/ToUnicode` CMap (`bfchar`, `bfrange`, a codespace szerinti kódhossz); egybájtos fontnál WinAnsi / MacRoman / Standard kódolás `/Differences`-szel (a glifnevek → Unicode a Unicode-névből generálva, a magyar `ohungarumlaut` / `odblacute` alakokkal, `uniXXXX` / `uXXXX`); Unicode alapú előre definiált CMap (`/Uni…-UCS2-H`, `UTF16`). A `/ToUnicode` nélküli Identity-H fontnál, ha a kódok Unicode-nak látszanak (van köztük szóköz, szinte mind nyomtatható), a kód maga a karakter; különben az ismeretlen kódú karakterek kimaradnak.
 - Minőségkapu nincs: az ismeretlen karakterek kimaradnak, a kitöltő sorok (`.......`) és a whitespace összevonva; hogy értelmes szöveg-e, azt a felhasználó (a tartalomszűrő tokenizálása) dönti el. A szöveg a content stream sorrendjében jön (többhasábos oldalt nem rendez át).
@@ -433,3 +433,20 @@ python3 samples_new/run_tests.py -v
 ```
 
 Az eredeti (`d993039`) változaton ugyanez a futás 12 ellenőrzésen bukik, a javított változaton mind átmegy.
+
+## 12. Tömeges vizsgálat: `pdfscan.py`
+
+Sok (akár több százezer) PDF vizsgálata párhuzamosan, JSONL naplóval a későbbi elemzéshez (Python 3.8+, pypy3-mal kb. 5-ször gyorsabb):
+
+```
+pdfscan.py scan [-j N] [-o scan.jsonl.gz] [--files files.txt] [--resume] [--timeout 120] [--max-size 500] [--mode both|validate|content] [--all] [--follow-dirs] [--no-dedup] DIR|FILE ...
+pdfscan.py report scan.jsonl.gz ... [-n 5] [--list KATEGORIA] [--dedup]
+pdfscan.py pack files.txt ids.txt out.tgz
+pdfscan.py paths [-0] files.txt ids.txt
+```
+
+- `scan`: fájlonként validate és content módban is (`--mode`), időkorláttal és méretkorláttal; a státusz `ok` / `notpdf` / `timeout` / `crash` / `toobig` / `readerror` / `duplicate`. Az azonos tartalmú (sha256) fájlokat alapból csak egyszer vizsgálja (megosztott `multiprocessing` Manager; ha az nem indul el, figyelmeztet, és deduplikáció nélkül folytatja). `--resume`: megszakadt futás folytatása; enélkül meglévő naplóba nem ír.
+- **Adatvédelem:** a napló **nem tartalmaz könyvtárútvonalat** (az ügyfél / projekt nem látszik), csak az útvonal sha256-jának elejét (`id`) és a fájlnevet. A teljes útvonal a `files.txt`-be kerül (`id <TAB> sha256 <TAB> útvonal`), ami a vizsgált gépen marad; a `.gitignore` kizárja a `files.txt`-t és a naplókat.
+- `report`: összesítés: státuszok, osztályok módonként (0 = hibátlan, 1–9 = figyelmeztetés, ≥10 = sérült, a `score()` szerint), a sérült fájlok a fő diagnózis szerint, a diagnózisok súly szerint, hibatípusok, leglassabb fájlok és kategóriánként példa-azonosítók. `--list KATEGORIA` (vagy `DAMAGED` / `WARNING`): az azonosítók soronként, a `pack`-nek átadható listaként.
+- **Szöveg (`pdf2str`):** content módban az első oldal szövegét is kinyeri (`--no-text`: kikapcsolva; ha a `pdf2str.py` nincs meg, magától kimarad), de a naplóba **csak a mérőszámai kerülnek** (`text: {chars, words, lines, time[, error]}`), maga a szöveg nem (személyes adat lehet). A `report` kiírja, hány fájlban van szöveg, a karakterszámok mediánját, a kinyerés kivételeit típus szerint és a leglassabb kinyeréseket; `--list NOTEXT` / `--list TEXTERROR`: a szöveg nélküli, ill. kivételt adó fájlok azonosítói.
+- `pack`: mintakéréshez a megadott azonosítójú fájlok becsomagolása **könyvtár nélkül**, `<id>_<név>` néven (a `tar -T` az útvonalakat is eltárolná). `paths`: az azonosítók → teljes útvonalak (csak a vizsgált gépen használandó).
