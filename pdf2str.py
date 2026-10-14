@@ -293,6 +293,7 @@ class _Page():
         self.fonts={}
         self.lastx=None
         self.lasty=None
+        self.lastsize=0
         self.nops=0
 
     def font(self,res,name):
@@ -371,12 +372,21 @@ class _Page():
         x,y=m[4],m[5]
         scale=(abs(m[2])+abs(m[3])) or 1
         size=st['fs']*scale
+        glyphs=f.decode(b)
+        # csak ismeretlen glif (pl. a szovegbe kepkent rajzolt ekezetes betu egy Type3 fontban, nulla szelesseggel,
+        # a glif tetejen levo kezdoponttal): a sor es a betumeret a korulotte levo szovegee marad
+        lone=(self.lasty is not None and self.lastsize and glyphs and all(u is None for c,u in glyphs)
+              and abs(y-self.lasty)<self.lastsize)
+        if lone: size=self.lastsize
         if self.lasty is not None:
-            if abs(y-self.lasty)>0.5*size: self.emit('\n')
+            # (also/felso index, pl. m2: kisebb betu kozvetlenul az elozo utan; ilyenkor a nagyobbik merethez merunk)
+            big=max(size,self.lastsize)
+            idx=size!=self.lastsize and -0.5*min(size,self.lastsize)<=x-self.lastx<=0.5*big
+            if abs(y-self.lasty)>0.5*(big if idx else size) and not lone: self.emit('\n')
             elif x-self.lastx>0.15*size: self.space()
             elif x<self.lastx-2*size: self.space()   # (visszaugras: masik hasab / atfedes)
         if f.cid_nomap and len(f.codes)<20000: f.codes+=[int.from_bytes(b[i:i+2],'big') for i in range(0,len(b)-1,2)]
-        for c,u in f.decode(b):
+        for c,u in glyphs:
             if u is None:
                 self.unknown+=1
                 u='\ufffd'
@@ -384,7 +394,8 @@ class _Page():
             w=f.width(c)/1000.0*st['fs']+st['tc']+(st['tw'] if f.codelen==1 and c==32 else 0)
             tm=_mul((1,0,0,1,w*st['th'],0),tm)
         m=_mul(tm,ctm)
-        self.lastx,self.lasty=m[4],m[5]
+        if lone: self.lastx=max(m[4],x+0.5*size)   # (a sor magassaga marad; szelesseg legalabb fel em)
+        else: self.lastx,self.lasty,self.lastsize=m[4],m[5],size
         return tm
 
 # /ToUnicode nelkuli Identity-H font: egyes irok a Unicode kodot hasznaljak CID-kent (ilyenkor a kod = a karakter).
@@ -401,11 +412,28 @@ def _identity_fonts(fonts):
             found=True
     return found
 
+# kulon glifkent a betu ele rajzolt ekezet (pl. a TeX regi fontjai: \H{o} -> U+02DD + 'o', \'{\i} -> U+00B4 + U+0131):
+# ha a ketto egy elore osszeallitott betu (NFC), osszevonjuk. Az ASCII " ` ^ ~ kimarad (valodi idezojel stb.)
+_ACC={'\u02dd':'\u030b','\u00b4':'\u0301','\u00a8':'\u0308','\u02c7':'\u030c','\u02d8':'\u0306','\u02c6':'\u0302',
+      '\u02da':'\u030a','\u02d9':'\u0307','\u02dc':'\u0303','\u00af':'\u0304'}
+_re_acc=re.compile('([%s])([^\\W\\d_])'%''.join(_ACC))
+def _accent(m):
+    c=m.group(2)
+    s=unicodedata.normalize('NFC',('i' if c=='\u0131' else c)+_ACC[m.group(1)])
+    return s if len(s)==1 else m.group(0)
+
 # a kinyert szoveg rendbetetele: az ismeretlen kodu karakterek (pl. szimbolum font, /ToUnicode nelkuli CID font)
-# kimaradnak, a kitolto sorok (....... ______) es a whitespace-ek osszevonva. Minosegkapu nincs: hogy ertelmes szoveg-e,
-# azt a felhasznalo (pl. a tartalomszuro tokenizalasa) donti el. None: nincs szoveg.
+# kimaradnak, de ha a szovegben tobb a betu, mint az ismeretlen karakter (szorvanyos hianyzo glif, tobbnyire ekezetes
+# betu), a betu melletti helyukre '?' kerul (a tokenizalo ugy illesztheti, hogy ott barmilyen ekezetes betu lehet).
+# A kulon rajzolt ekezetek a betuhoz vonva (_accent), a kitolto sorok (....... ______) es a whitespace-ek osszevonva.
+# Minosegkapu nincs: hogy ertelmes szoveg-e, azt a felhasznalo (pl. a tartalomszuro tokenizalasa) donti el.
+# None: nincs szoveg.
 def _clean(text):
-    t=text.replace('\ufffd','')
+    text=_re_acc.sub(_accent,text)
+    n=text.count('\ufffd')
+    if n and sum(c.isalpha() for c in text)>n:
+        t=re.sub(r'(?<![^\W\d_])\ufffd+(?![^\W\d_])','',text).replace('\ufffd','?')   # (csak betu mellett)
+    else: t=text.replace('\ufffd','')
     t=re.sub(r'([^\w\s])\1{3,}',r'\1\1\1',t)
     t=re.sub(r'[ \t\u00a0]+',' ',t)
     t=re.sub(r' *\n[ \n]*','\n',t).strip()
