@@ -162,6 +162,17 @@ A `parse()` lefutása után a `PDFParser` példányon keresztül az objektumok s
 
 Tipikus használat: `cat = pdf.deref(('R', pdf.root))`, `pages = pdf.deref(cat[b'/Pages'])`, `page = pdf.deref(pages[b'/Kids'][0])`, `top, st = pdf.get_obj(page[b'/Contents'][1])`, `ops = list(content_ops(st.decode()))`. Teszt: `samples_new/13a–13c`.
 
+### 4.5 Szövegkinyerés: `pdf2str.py`
+
+Külön modul (a két alapfelhasználáshoz – validálás, vírusszűrés – nem kell), az első oldal szövegét adja (pl. szöveg alapú spamszűrőhöz), a 4.4-es objektum-eléréssel, külső függőség nélkül:
+
+- `first_page_text(pdf, maxops=MAXOPS)`: egy már lefuttatott (`parse()`) `PDFParser`-ből; `str`, vagy `None`, ha nincs kinyerhető szöveg. `parse_pdf_text(d)`: `parse_pdf()` és a szöveg egy menetben: `(content, errcnt, errors, text)`.
+- Első oldal: Root → Pages → Kids bejárás, az öröklött `/Resources`-szel. A `/Contents` stream(ek) a `content_ops`-szal; szövegoperátorok (`Tf`, `Tj`, `TJ`, `'`, `"`), a szöveg- és sormátrix (`Td`, `TD`, `T*`, `Tm`, `TL`, `Tc`, `Tw`, `Tz`) és a `cm`/`q`/`Q`: a sortörés a függőleges, a szóköz a vízszintes elmozdulásból (a karakterszélesség a font `/Widths`-éből, ill. a CID font `/W` / `/DW` értékéből), és a `TJ` nagy (−180 alatti) kerningjéből. Form XObject (`Do`) rekurzívan, mélység- és körkorláttal.
+- Fontok: `/ToUnicode` CMap (`bfchar`, `bfrange`, a codespace szerinti kódhossz); egybájtos fontnál WinAnsi / MacRoman / Standard kódolás `/Differences`-szel (a glifnevek → Unicode a Unicode-névből generálva, a magyar `ohungarumlaut` / `odblacute` alakokkal, `uniXXXX` / `uXXXX`); Unicode alapú előre definiált CMap (`/Uni…-UCS2-H`, `UTF16`). A `/ToUnicode` nélküli Identity-H fontnál, ha a kódok Unicode-nak látszanak (van köztük szóköz, szinte mind nyomtatható), a kód maga a karakter; különben az ismeretlen kódú karakterek kimaradnak.
+- Minőségkapu nincs: az ismeretlen karakterek kimaradnak, a kitöltő sorok (`.......`) és a whitespace összevonva; hogy értelmes szöveg-e, azt a felhasználó (a tartalomszűrő tokenizálása) dönti el. A szöveg a content stream sorrendjében jön (többhasábos oldalt nem rendez át).
+- Korlátok: `MAXOPS` (2 000 000 operátor / oldal: a rajzokon a szöveg előtt több százezer vonalrajzoló operátor is lehet; pypy-vel kb. 1,5 M operátor/s), `MAXTEXT` (100 000 karakter), `MAXDEPTH` (8 egymásba ágyazott form). Képként beszkennelt oldal (OCR kellene) és saját kódolású beágyazott font nélkülözhetetlen leképezés nélkül: nincs szöveg.
+- Ellenőrzés (helyi korpusz, 5804 PDF, első oldal): a pdfminer-rel (`extract_text(maxpages=1)`) összevetve a fájlok 73,7%-ánál a pdfminer szavainak legalább 90%-a megvan, 4,4%-ánál csak a szóhatárok térnek el, az átlagos szóegyezés mindkét irányban 0,96; pypy alatt kb. 3,8-szor gyorsabb a teljes elemzéssel együtt (a pdfminer egyes rajzokon 60 s fölött). Szintetikus minták: `samples/text_*.pdf` (a várt szöveg a helyi `tests/test_samples.py` `TEXT` táblájában).
+
 ## 5. Stream-dekóderek
 
 A `PDFStream.decode(predictor=False)` (332. sor) a `/Filter` lista sorrendjében alkalmazza a szűrőket. Nem dob kivételt: az **első** hiba a `stream.error`-ba, a megjegyzések a `stream.note`-ba kerülnek, és a részlegesen dekódolt adatot adja vissza. A képformátumoknál (`/DCTDecode`, `/JPXDecode`, `/JBIG2Decode`, `/CCITTFaxDecode`) megáll, a `/Crypt`-et átugorja, ismeretlen szűrőt kiír. Az inline-image rövidítéseket (`/Fl`, `/AHx`, `/A85`, `/LZW`, `/RL`) is elfogadja.
