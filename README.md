@@ -58,7 +58,7 @@ A program a futása közben **sok mindent kiír a stdout-ra** (a `print` hívás
 | Név | Tartalom |
 |---|---|
 | `pdfstream.js` | JavaScript: `/JS` string vagy stream, illetve HTML `<script>` blokk |
-| `pdfstream.dat` vagy a csatolmány fájlneve | `/EmbeddedFile` stream kibontott adata (titkosított PDF-nél nyersen) |
+| `pdfstream.dat` vagy a csatolmány fájlneve | `/EmbeddedFile` stream kibontott adata (titkosított PDF-nél visszafejtve, ha üres felhasználói jelszóval lehet; különben nyersen) |
 | `pdfstream.html` | a `%PDF` fejléc előtti vagy a `%%EOF` utáni HTML |
 | `pdfstream.launch` | Launch action célja: a `/F`, `/Win`, `/Unix`, `/Mac`, `/P`, `/D`, `/O` értékek szóközzel összefűzve (beágyazott Filespec-nél az ismétlődő kulcs csak egyszer: `/F javascript:void(0)`) |
 | `pdfstream.urls` | az URI action-ök céljai (közvetlen string vagy hivatkozott string obj, objstm-ben is), soronként egy, ismétlés nélkül, egy tételben; a `javascript:` URI-k nélkül (azok a `pdfstream.uri.js`-ben) |
@@ -186,7 +186,7 @@ A `startxref` offsetjétől indulva egy `todo` listán követi a `/Prev` és `/X
 - **ASCII tábla** (`parse_xref_table`, 1110): `xref` + alszekció-fejlécek + `offset gen n|f` sorok + `trailer <<...>>`. Az `n` bejegyzések `xref[oid] = (offset+base, gen)`; a `setdefault` miatt a legfrissebb szekció győz. A `0 offsetű n` bejegyzések külön halmazba (`xref_zero`) kerülnek. Javítja azt a gyakori hibát, amikor az első szabad bejegyzés 1-es sorszámmal indul 0 helyett.
 - **Xref stream** (`parse_xref_stream`, 1136): `/W [a b c]`, `/Index`, `/Size` alapján olvassa a bináris sorokat. 1-es típus → `xref`, 2-es típus → `xref_stm[oid] = (objstm oid, index)`, 1-es típus 0 offsettel → `xref_zero`. A dekódolási hiba itt súlyos (10).
 
-A trailerből a `/Encrypt` objektum számát is kiolvassa (`self.encrypt`); titkosított fájlnál a streamek dekódolását és az objstm-ek bontását kihagyja, a csatolmányt nyersen adja ki.
+A trailerből a `/Encrypt` objektum számát és az `/ID` első elemét is kiolvassa (`self.encrypt`, `self.fileid`). A bejárás előtt a `setup_crypt` kiszámolja a Standard security handler kulcsát **üres felhasználói jelszóval**, és ellenőrzi (ISO 32000-2 7.6.4.3): RC4 40–128 bit (R2–R4), AES-128 (V4, AESV2), AES-256 (V5, R5/R6 AESV3, a 2.B hash-sel). A titkosított PDF-ek többsége csak tulajdonosi jelszóval (jogosultság-korlátozással) titkosított, ezeket bármelyik néző jelszó nélkül megnyitja. Ha a kulcs jó (`self.crypt`), a `decrypt_obj` minden (nem objstm-beli) obj stringjeit és streamjét a feldolgozás előtt visszafejti (objektumonkénti kulccsal), és a fájl ugyanúgy elemződik, mint egy titkosítatlan (JS, URI, csatolmány a nevével, objstm, sérülés-ellenőrzés). Nem fejti vissza a szabvány szerint titkosítatlan részeket: az xref streamet, a titkosítási szótárt, az aláírás `/Contents`-ét, és `/EncryptMetadata false` mellett a metaadat streamet. Kiírás: `CRYPT: V4 R4 AES 128 bit, empty user password: decrypting`. Ha felhasználói jelszó kell (vagy közvetlen `/Encrypt` szótár, hiányzó `/ID`, ismeretlen handler), a fájl titkosított marad (`opaque()`): a streamek dekódolását és az objstm-ek bontását kihagyja, a csatolmányt nyersen adja ki. Az RC4 és az AES (táblázatos, FIPS-197) külső függőség nélkül, a modulban van; az AES pypy-vel kb. 25 MB/s, CPythonnal kb. 1 MB/s. Egyik eset sem hiba.
 
 Ha a `startxref` rossz helyre mutat, visszafelé keresi az utolsó `xref` kulcsszót (`rfind_xref`, 1038. sor; a `startxref` belsejében levő találat nem számít), két helyen: `parse()` 918. sor, `parse_xref` 1084. sor.
 
@@ -209,7 +209,7 @@ Minden bejegyzésre megnézi, hogy az offseten (max. 4 whitespace-t megengedve) 
 
 ### 7.1 `parse_stream` (1233)
 
-Minden streamet kibont (a tömörítési hibák miatt), kivéve a titkosított fájlokat és az xref streameket (azokat a `parse_xref` már ellenőrizte). A dekódolási hiba `STREAM: decoding error in obj #N` hiba, a megjegyzés csak kiírás. `/EmbeddedFile` → `content` (először `pdfstream.dat` néven; a stream obj-száma a `filestreams` térképbe kerül, a végleges nevet a `name_files` adja a feldolgozás végén); `/ObjStm` → `parse_objstm`. Előtte `check_stream_length` a sorvége-statisztikához.
+Minden streamet kibont (a tömörítési hibák miatt), kivéve a vissza nem fejthető titkosított fájlokat és az xref streameket (azokat a `parse_xref` már ellenőrizte). A dekódolási hiba `STREAM: decoding error in obj #N` hiba, a megjegyzés csak kiírás. `/EmbeddedFile` → `content` (először `pdfstream.dat` néven; a stream obj-száma a `filestreams` térképbe kerül, a végleges nevet a `name_files` adja a feldolgozás végén); `/ObjStm` → `parse_objstm`. Előtte `check_stream_length` a sorvége-statisztikához.
 
 ### 7.2 Objektum-streamek (`parse_objstm`, 1465)
 
@@ -247,7 +247,7 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 ## 9. Ismert tervezési korlátok
 
 - A hivatkozott `/Length` feloldása a fájlban levő `N G obj <szám> endobj` alakú objektumra épül; ha a hossz-objektum egy object streamben van, nem találja meg, és az `endstream` keresése dönt (mint régen).
-- Titkosított PDF-nél nincs dekódolás; a `/Encrypt` csak a trailerből derül ki, a `scan_objs` közben talált `trailer`-ből nem.
+- Titkosított PDF-et csak üres felhasználói jelszóval fejt vissza (a felhasználói jelszavast nem); a `/Encrypt` csak a trailerből derül ki, a `scan_objs` közben talált `trailer`-ből nem; közvetlen (nem hivatkozott) `/Encrypt` szótárt és a `/Crypt` szűrős streameket nem fejt vissza.
 - A csonkolt LZW stream csak a hosszából ismerhető fel: az LZW-ben nincs záró blokk vagy ellenőrzőösszeg, ezért a hiányzó EOD kód megjegyzés, ha a `/Length` biztosan megadja a stream végét, és hiba, ha nem (10.9). Egy `/Length`-hez igazított, de csonka LZW adat (pl. `samples/lzw_trunc.pdf`) így nem hiba. A Flate-nél a hiányzó záró blokk mindig hiba.
 - A TIFF-predictor csak 8 bit/komponensre működik; a `/DecodeParms` hivatkozott (`R`) értékei `TypeError`-t, azaz hamis `Predictor:` hibát adnak.
 - Inline image (`BI ... ID ... EI`) csak tartalom-streamen belül létezik, amit a program nem elemez; a 637. sor ága gyakorlatilag csak szemétnél fut, és a teljes `objs` listát kiírja.

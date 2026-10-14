@@ -19,6 +19,8 @@ import sys
 import traceback
 import zlib
 import re
+import struct
+import hashlib
 
 WHITESPACE=b'\x00\t\n\x0c\r '
 # pontozas: a DAMAGE (10) sulyu hibak a serulest jelzik (csonka file, adatvesztes, a stream adatot is megvaltoztato
@@ -323,6 +325,157 @@ def unpredict(d,parms):
     return out
 
 # special string object
+# --- titkositas (Standard security handler): visszafejtes ures felhasznaloi jelszoval ---
+# A titkositott pdf-ek nagy resze csak tulajdonosi jelszoval (jogosultsag korlatozasra) titkositott: az ures felhasznaloi
+# jelszoval barmelyik nezo megnyitja. Ilyenkor a stringek es a streamek visszafejthetok, igy a JS / URI / csatolmany
+# keresese es a serules-ellenorzes is mukodik. RC4 (40-128 bit, R2-R4), AES-128 (AESV2, R4) es AES-256 (AESV3, R5/R6).
+# Kulso fuggoseg nelkul: az RC4 es az AES (tablazatos, FIPS-197) itt van megirva.
+
+PDF_PAD=bytes.fromhex('28BF4E5E4E758A4164004E56FFFA01082E2E00B6D0683E802F0CA9FE6453697A')
+
+def rc4(key,data):
+    S=list(range(256))
+    j=0
+    kl=len(key)
+    for i in range(256):
+        j=(j+S[i]+key[i%kl])&255
+        S[i],S[j]=S[j],S[i]
+    out=bytearray(len(data))
+    i=j=0
+    for k in range(len(data)):
+        i=(i+1)&255
+        si=S[i]
+        j=(j+si)&255
+        sj=S[j]
+        S[i]=sj
+        S[j]=si
+        out[k]=data[k]^S[(si+sj)&255]
+    return bytes(out)
+
+def _aes_tables():
+    exp=[0]*256
+    log=[0]*256
+    x=1
+    for i in range(255):
+        exp[i]=x
+        log[x]=i
+        x^=(x<<1)^(0x11B if x&0x80 else 0)   # x*3 GF(2^8)-ban
+        x&=0xFF
+    def mul(a,b): return exp[(log[a]+log[b])%255] if a and b else 0
+    sbox=[0]*256
+    inv=[0]*256
+    for a in range(256):
+        b=exp[(255-log[a])%255] if a else 0   # (a multiplikativ inverz; 1-re exp[0])
+        s=b
+        for k in range(1,5): s^=((b<<k)|(b>>(8-k)))&0xFF
+        s^=0x63
+        sbox[a]=s
+        inv[s]=a
+    te=[[0]*256 for i in range(4)]
+    td=[[0]*256 for i in range(4)]
+    for a in range(256):
+        s=sbox[a]
+        w=(mul(s,2)<<24)|(s<<16)|(s<<8)|mul(s,3)
+        si=inv[a]
+        v=(mul(si,14)<<24)|(mul(si,9)<<16)|(mul(si,13)<<8)|mul(si,11)
+        for k in range(4):
+            te[k][a]=((w>>(8*k))|(w<<(32-8*k)))&0xFFFFFFFF
+            td[k][a]=((v>>(8*k))|(v<<(32-8*k)))&0xFFFFFFFF
+    return sbox,inv,te,td
+
+AES_SBOX,AES_INV,AES_TE,AES_TD=_aes_tables()
+
+# kulcs-kiterjesztes: (titkosito kulcsok, visszafejto kulcsok (InvMixColumns-szal), korok szama)
+def aes_key(key):
+    nk=len(key)//4
+    nr=nk+6
+    w=list(struct.unpack('>%dI'%nk,key))
+    rcon=1
+    for i in range(nk,4*(nr+1)):
+        t=w[i-1]
+        if i%nk==0:
+            t=((t<<8)|(t>>24))&0xFFFFFFFF
+            t=(AES_SBOX[t>>24]<<24)|(AES_SBOX[(t>>16)&255]<<16)|(AES_SBOX[(t>>8)&255]<<8)|AES_SBOX[t&255]
+            t^=rcon<<24
+            rcon=(rcon<<1)^(0x11B if rcon&0x80 else 0)
+        elif nk>6 and i%nk==4:
+            t=(AES_SBOX[t>>24]<<24)|(AES_SBOX[(t>>16)&255]<<16)|(AES_SBOX[(t>>8)&255]<<8)|AES_SBOX[t&255]
+        w.append(w[i-nk]^t)
+    S=AES_SBOX
+    T0,T1,T2,T3=AES_TD
+    dk=[]
+    for r in range(nr,-1,-1):
+        for c in range(4):
+            x=w[4*r+c]
+            if 0<r<nr: x=T0[S[x>>24]]^T1[S[(x>>16)&255]]^T2[S[(x>>8)&255]]^T3[S[x&255]]
+            dk.append(x)
+    return w,dk,nr
+
+def aes_cbc_decrypt(key,iv,data):
+    w,dk,nr=key if type(key)==tuple else aes_key(key)
+    T0,T1,T2,T3=AES_TD
+    I=AES_INV
+    n=len(data)//16
+    blocks=struct.unpack('>%dI'%(4*n),data[:16*n])
+    p0,p1,p2,p3=struct.unpack('>4I',iv)
+    out=[]
+    for b in range(0,4*n,4):
+        c0,c1,c2,c3=blocks[b:b+4]
+        s0=c0^dk[0]; s1=c1^dk[1]; s2=c2^dk[2]; s3=c3^dk[3]
+        k=4
+        for r in range(1,nr):
+            t0=T0[s0>>24]^T1[(s3>>16)&255]^T2[(s2>>8)&255]^T3[s1&255]^dk[k]
+            t1=T0[s1>>24]^T1[(s0>>16)&255]^T2[(s3>>8)&255]^T3[s2&255]^dk[k+1]
+            t2=T0[s2>>24]^T1[(s1>>16)&255]^T2[(s0>>8)&255]^T3[s3&255]^dk[k+2]
+            t3=T0[s3>>24]^T1[(s2>>16)&255]^T2[(s1>>8)&255]^T3[s0&255]^dk[k+3]
+            s0,s1,s2,s3=t0,t1,t2,t3
+            k+=4
+        out.append(((I[s0>>24]<<24)|(I[(s3>>16)&255]<<16)|(I[(s2>>8)&255]<<8)|I[s1&255])^dk[k]^p0)
+        out.append(((I[s1>>24]<<24)|(I[(s0>>16)&255]<<16)|(I[(s3>>8)&255]<<8)|I[s2&255])^dk[k+1]^p1)
+        out.append(((I[s2>>24]<<24)|(I[(s1>>16)&255]<<16)|(I[(s0>>8)&255]<<8)|I[s3&255])^dk[k+2]^p2)
+        out.append(((I[s3>>24]<<24)|(I[(s2>>16)&255]<<16)|(I[(s1>>8)&255]<<8)|I[s0&255])^dk[k+3]^p3)
+        p0,p1,p2,p3=c0,c1,c2,c3
+    return struct.pack('>%dI'%len(out),*out)
+
+# (csak az R6 jelszo-hash-hez kell)
+def aes_cbc_encrypt(key,iv,data):
+    w,dk,nr=aes_key(key)
+    T0,T1,T2,T3=AES_TE
+    S=AES_SBOX
+    n=len(data)//16
+    blocks=struct.unpack('>%dI'%(4*n),data[:16*n])
+    c0,c1,c2,c3=struct.unpack('>4I',iv)
+    out=[]
+    for b in range(0,4*n,4):
+        s0=blocks[b]^c0^w[0]; s1=blocks[b+1]^c1^w[1]; s2=blocks[b+2]^c2^w[2]; s3=blocks[b+3]^c3^w[3]
+        k=4
+        for r in range(1,nr):
+            t0=T0[s0>>24]^T1[(s1>>16)&255]^T2[(s2>>8)&255]^T3[s3&255]^w[k]
+            t1=T0[s1>>24]^T1[(s2>>16)&255]^T2[(s3>>8)&255]^T3[s0&255]^w[k+1]
+            t2=T0[s2>>24]^T1[(s3>>16)&255]^T2[(s0>>8)&255]^T3[s1&255]^w[k+2]
+            t3=T0[s3>>24]^T1[(s0>>16)&255]^T2[(s1>>8)&255]^T3[s2&255]^w[k+3]
+            s0,s1,s2,s3=t0,t1,t2,t3
+            k+=4
+        c0=((S[s0>>24]<<24)|(S[(s1>>16)&255]<<16)|(S[(s2>>8)&255]<<8)|S[s3&255])^w[k]
+        c1=((S[s1>>24]<<24)|(S[(s2>>16)&255]<<16)|(S[(s3>>8)&255]<<8)|S[s0&255])^w[k+1]
+        c2=((S[s2>>24]<<24)|(S[(s3>>16)&255]<<16)|(S[(s0>>8)&255]<<8)|S[s1&255])^w[k+2]
+        c3=((S[s3>>24]<<24)|(S[(s0>>16)&255]<<16)|(S[(s1>>8)&255]<<8)|S[s2&255])^w[k+3]
+        out+=[c0,c1,c2,c3]
+    return struct.pack('>%dI'%len(out),*out)
+
+# ISO 32000-2 7.6.4.3.4 (2.B algoritmus): az R6 jelszo-hash
+def pdf_hash_2b(pw,salt,udata):
+    K=hashlib.sha256(pw+salt+udata).digest()
+    i=0
+    while True:
+        K1=(pw+K+udata)*64
+        E=aes_cbc_encrypt(K[:16],K[16:32],K1)
+        h=sum(E[:16])%3
+        K=(hashlib.sha256,hashlib.sha384,hashlib.sha512)[h](E).digest()
+        i+=1
+        if i>=64 and E[-1]<=i-32: break
+    return K[:32]
+
 class PDFString():
     def __init__(self,d):
         self.data=d
@@ -790,6 +943,8 @@ class PDFParser():
         self.errors=[]      # [(suly,uzenet),...]
         self.content=[]     # [(data,filename),...]
         self.encrypt=0
+        self.crypt=None     # visszafejtes (ures felhasznaloi jelszoval): {'key','n','stm','str','metadata'}, l. setup_crypt
+        self.fileid=None    # a trailer /ID elso eleme (a kulcs szamitasahoz)
         self.xref={}        # oid -> (offset,gen)          ASCII xref tabla, vagy binaris xref type=1
         self.badxref=set()  # az xref-ben rossz pozicioval szereplo oid-k
         self.xref_stream_oids=set() # az xref streamek obj szamai
@@ -990,6 +1145,7 @@ class PDFParser():
         self.verify_xref(headend,pend)
         self.check_xref_zero()
         self.check_truncated()
+        if self.encrypt: self.setup_crypt()
 
         # csonka file-nal az xref sem teljes, azt sem jarjuk be
         if self.validate and self.xref and len(self.badxref)*2<=len(self.xref) and not self.truncated:
@@ -1101,6 +1257,7 @@ class PDFParser():
                     if self.debug: print("CRYPT: "+str(objs[3:]))
                     print("CRYPT: V="+str(objs_value(objs,b'/V'))+" len="+str(objs_value(objs,b'/Length'))+" cfm="+str(objs_value(objs,b'/CFM')) )
 
+                if self.crypt and oid!=self.encrypt: self.decrypt_obj(oid,objs,stream)
                 if stream: self.parse_stream(oid,objs,stream)
                 self.analyze_obj(oid,objs)
 
@@ -1144,6 +1301,8 @@ class PDFParser():
                 except Exception:
                     self.encrypt=-1
                 if self.debug: print("CRYPT: "+str(self.encrypt))
+                i=objs.index(b'/ID')+1 if b'/ID' in objs else len(objs)
+                if i+1<len(objs) and objs[i]=='[' and type(objs[i+1])==PDFString: self.fileid=objs[i+1].get()
             if objs[0]==b'xref':
                 self.parse_xref_table(objs)
             elif b'/XRef' in objs and stream:
@@ -1298,7 +1457,7 @@ class PDFParser():
 
     # a binaris xref szerint object streamben levo obj-ek tenyleg ott vannak-e?
     def verify_xref_stm(self):
-        if self.encrypt: return  # titkositott file-nal az objstm-eket nem bontjuk ki
+        if self.opaque(): return  # (vissza nem fejtheto) titkositott file-nal az objstm-eket nem bontjuk ki
         missing={}
         for oid,(stm,idx) in self.xref_stm.items():
             if stm in self.objstm and oid in self.objstm[stm]: continue
@@ -1313,16 +1472,16 @@ class PDFParser():
         is_file=top.get(b'/Type')==b'/EmbeddedFile'
         # minden streamet kitomoritunk (tomoritesi hibak keresese). titkositott file-nal ennek nincs ertelme,
         # ott csak a csatolmanyt vesszuk ki (ahogy van), es a dekodolasi hibakat nem szamoljuk.
-        if self.encrypt and not is_file: return
+        if self.opaque() and not is_file: return
         if top.get(b'/Type')==b'/XRef': return  # ezt a parse_xref mar kibontotta es ellenorizte
         is_objstm=top.get(b'/Type')==b'/ObjStm'
         # titkositott file-nal a csatolmanyt nyersen adjuk vissza (ugysem tudjuk kibontani)
-        dd=stream.data if self.encrypt else stream.decode(predictor=is_objstm or is_file)
-        if stream.error and not self.encrypt:
+        dd=stream.data if self.opaque() else stream.decode(predictor=is_objstm or is_file)
+        if stream.error and not self.opaque():
             self.err("STREAM: decoding error in obj #%d: %s"%(oid,stream.error))
             self.decerr+=1
             if 'ZLIB: Error -3' in stream.error or 'adler32 checksum mismatch' in stream.error: self.corrupt+=1
-        if stream.note and not self.encrypt:
+        if stream.note and not self.opaque():
             print("STREAM: obj #%d: %s"%(oid,stream.note))
 
         if is_file:
@@ -1330,7 +1489,7 @@ class PDFParser():
             self.filestreams[oid]=len(self.content)
             self.add_content(dd,"pdfstream.dat")
 
-        if is_objstm and not self.encrypt: # ebben lehet /URI, /JS elrejtve...
+        if is_objstm and not self.opaque(): # ebben lehet /URI, /JS elrejtve...
             self.parse_objstm(oid,top,dd)
 
     # adatvesztes (vagy beszurt adat) egy stream belsejeben: az utana kovetkezo osszes xref bejegyzes ugyanannyival
@@ -1591,6 +1750,99 @@ class PDFParser():
         print(msg)
         self.errors.insert(0,(DAMAGE,msg))
 
+    # titkositott, de nem visszafejtheto (felhasznaloi jelszo kell, vagy ismeretlen titkositas): a stringek es a streamek
+    # tartalmat nem latjuk, ezeket nem elemezzuk (a csatolmanyt nyersen adjuk vissza)
+    def opaque(self):
+        return bool(self.encrypt) and not self.crypt
+
+    # a Standard security handler kulcsa ures felhasznaloi jelszoval (ISO 32000-2 7.6.4.3), es annak ellenorzese.
+    # Siker eseten self.crypt-be kerul, kulonben a file titkositott marad (opaque).
+    def setup_crypt(self):
+        if self.encrypt<0:
+            print("CRYPT: direct /Encrypt dictionary, not decrypted")
+            return
+        x=self.xref.get(self.encrypt)
+        pos=x[0] if x and type(x[0])==int else None
+        if pos is None or not re_objstart.match(self.d,pos):
+            st=self.obj_starts().get((self.encrypt,x[1] if x and type(x[1])==int else 0))
+            pos=st[-1] if st else None
+        if pos is None:
+            print("CRYPT: /Encrypt obj #%d not found"%(self.encrypt))
+            return
+        q,objs,stream=parse_pdf_obj(self.d,pos,len(self.d),stop=b'endobj',lenref=self.resolve_length)
+        top=top_dict(objs)
+        g=lambda k: top[k].get() if type(top.get(k))==PDFString else b''
+        O,U,OE,UE=g(b'/O'),g(b'/U'),g(b'/OE'),g(b'/UE')
+        V=top.get(b'/V') if type(top.get(b'/V'))==int else 0
+        R=top.get(b'/R') if type(top.get(b'/R'))==int else 0
+        P=top.get(b'/P') if type(top.get(b'/P'))==int else 0
+        L=top.get(b'/Length') if type(top.get(b'/Length'))==int else 40
+        meta=top.get(b'/EncryptMetadata')!=b'false'
+        cfm=objs_value(objs,b'/CFM')
+        cfm=cfm[0] if type(cfm)==list and cfm else cfm
+        method=lambda f: 'none' if f==b'/Identity' else 'aes' if cfm in (b'/AESV2',b'/AESV3') else 'rc4'
+        stm=method(top.get(b'/StmF')) if V>=4 else 'rc4'
+        strf=method(top.get(b'/StrF')) if V>=4 else 'rc4'
+        if top.get(b'/Filter')!=b'/Standard' or not R:
+            print("CRYPT: unsupported security handler %s R=%s, not decrypted"%(str(top.get(b'/Filter')),str(R)))
+            return
+        key=None
+        n=32
+        if R<=4:
+            n=5 if R==2 else max(5,min(16,L//8 if L>=40 else L))   # (/Length bitben; egyes irok byte-ban adjak meg)
+            if self.fileid is None:
+                print("CRYPT: missing /ID, not decrypted")
+                return
+            k=hashlib.md5(PDF_PAD+O[:32]+struct.pack('<I',P&0xFFFFFFFF)+self.fileid+(b'\xff'*4 if R>=4 and not meta else b'')).digest()
+            if R>=3:
+                for i in range(50): k=hashlib.md5(k[:n]).digest()
+            k=k[:n]
+            if R==2: ok=rc4(k,PDF_PAD)==U[:32]
+            else:
+                c=rc4(k,hashlib.md5(PDF_PAD+self.fileid).digest())
+                for i in range(1,20): c=rc4(bytes(b^i for b in k),c)
+                ok=c==U[:16]
+            if ok: key=k
+        elif R in (5,6) and len(U)>=48 and len(UE)>=32:
+            h=(lambda salt: hashlib.sha256(salt).digest()) if R==5 else (lambda salt: pdf_hash_2b(b'',salt,b''))
+            if h(U[32:40])==U[:32]:
+                key=aes_cbc_decrypt(h(U[40:48]),b'\0'*16,UE[:32])
+            stm=stm if stm=='none' else 'aes'
+            strf=strf if strf=='none' else 'aes'
+        desc="V%d R%d %s %d bit"%(V,R,'AES' if 'aes' in (stm,strf) else 'RC4',8*n)
+        if key is None:
+            print("CRYPT: %s, user password needed: strings and streams are not decrypted"%(desc))
+            return
+        print("CRYPT: %s, empty user password: decrypting"%(desc))
+        self.crypt={'key':key,'n':n,'R':R,'stm':stm,'str':strf,'metadata':meta}
+
+    def decrypt(self,oid,gen,data,kind):
+        c=self.crypt
+        m=c[kind]
+        if m=='none': return data
+        if c['R']>=5: k=c['key']
+        else:
+            k=hashlib.md5(c['key']+struct.pack('<I',oid)[:3]+struct.pack('<I',gen)[:2]+(b'sAlT' if m=='aes' else b'')).digest()[:min(c['n']+5,16)]
+        if m=='rc4': return rc4(k,data)
+        if len(data)<32: return b''   # (IV + legalabb egy blokk; az ures string / stream is 32 byte)
+        d=aes_cbc_decrypt(k,bytes(data[:16]),bytes(data[16:16+(len(data)-16)//16*16]))
+        pad=d[-1] if d else 0
+        if 1<=pad<=16 and d.endswith(bytes([pad])*pad): d=d[:-pad]
+        return d
+
+    # egy (nem objstm-ben levo) obj stringjeinek es streamjenek visszafejtese helyben. Nem titkositott: az xref stream,
+    # az alairas /Contents-e, es /EncryptMetadata false eseten a metaadat stream.
+    def decrypt_obj(self,oid,objs,stream):
+        gen=objs[1] if len(objs)>1 and type(objs[1])==int else 0
+        top=top_dict(objs)
+        if top.get(b'/Type')==b'/XRef': return
+        sig=b'/ByteRange' in objs
+        for i,t in enumerate(objs):
+            if type(t)==PDFString and not (sig and objs[i-1]==b'/Contents'):
+                t.data=bytearray(self.decrypt(oid,gen,t.data,'str'))
+        if stream and not (top.get(b'/Type')==b'/Metadata' and not self.crypt['metadata']) and not b'/Crypt' in objs:
+            stream.data=self.decrypt(oid,gen,stream.data,'stm')
+
     # csonka file (felbeszakadt letoltes / masolas): a vege nullakkal van kitoltve, vagy az utolso %%EOF utan
     # meg obj-ek vannak (pl. linearizalt file-nal csak az elso oldal szekcioja teljes)
     def check_truncated(self):
@@ -1687,7 +1939,7 @@ class PDFParser():
         # [29, 0, b'obj', '<', b'/Type', b'/Action', b'/S', b'/URI', b'/URI', 30, 0, b'R', '>', b'endobj']
         # find /URI in object:
         i=0
-        while not self.encrypt:
+        while not self.opaque():
             try:
                 i=objs.index(b'/URI',i)
                 i+=1
@@ -1708,7 +1960,7 @@ class PDFParser():
 
         # find FIle attachment in object: a nev a /EF << /F 12 0 R /UF 12 0 R >> altal hivatkozott stream(ek)hez tartozik
         # (a Filespec es a stream sorrendje a file-ban tetszoleges, tobb csatolmanynal a sorrend alapjan parositas rossz volt)
-        if top.get(b'/Type')==b'/Filespec' and not self.encrypt:
+        if top.get(b'/Type')==b'/Filespec' and not self.opaque():
             fn=top.get(b'/UF')
             if type(fn)!=PDFString: fn=top.get(b'/F')
             if type(fn)==PDFString:
@@ -1812,6 +2064,7 @@ class PDFParser():
                 elif oid in self.dom:
                     objp,end=self.dom[oid]
                     q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',lenref=self.resolve_length)
+                    if self.crypt: self.decrypt_obj(oid,objs,stream)
                     parts+=[text_bytes(t.get()) for t in objs if type(t)==PDFString]
                 else: parts.append(b'(obj #%d not found)'%(oid))
             t=b' '.join(parts)
@@ -1823,7 +2076,7 @@ class PDFParser():
     # JavaScriptek (a nezo a bongeszonek adja at az URI-t), de weboldalbol nyomtatott pdf-ekben gyakoriak, es a JS-t
     # kereso szuronek hasznosak.
     def resolve_urls(self):
-        if self.encrypt: return   # (validate modban is fut: a kiirasok kellenek, az add_content ott ugysem tarol adatot)
+        if self.opaque(): return   # (validate modban is fut: a kiirasok kellenek, az add_content ott ugysem tarol adatot)
         for oid in self.urlrefs:
             if oid in self.strobjs: self.urls.append(self.strobjs[oid])
         seen=set()
@@ -1848,6 +2101,7 @@ class PDFParser():
             elif oid in self.dom:
                 objp,end=self.dom[oid]
                 q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',lenref=self.resolve_length)
+                if self.crypt: self.decrypt_obj(oid,objs,stream)
                 if stream:
                     js=bytes(stream.decode(predictor=True))  # a dekodolasi hibat mar szamoltuk
                 else:
