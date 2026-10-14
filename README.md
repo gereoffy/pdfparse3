@@ -197,7 +197,29 @@ Külön modul (a két alapfelhasználáshoz – validálás, vírusszűrés – 
 - Fontok: `/ToUnicode` CMap (`bfchar`, `bfrange`, a codespace szerinti kódhossz); egybájtos fontnál WinAnsi / MacRoman / Standard kódolás `/Differences`-szel (a glifnevek → Unicode a Unicode-névből generálva, a magyar `ohungarumlaut` / `odblacute` alakokkal, `uniXXXX` / `uXXXX`); Unicode alapú előre definiált CMap (`/Uni…-UCS2-H`, `UTF16`). A `/ToUnicode` nélküli Identity-H fontnál, ha a kódok Unicode-nak látszanak (van köztük szóköz, szinte mind nyomtatható), a kód maga a karakter; különben az ismeretlen kódú karakterek kimaradnak.
 - Minőségkapu nincs: az ismeretlen karakterek kimaradnak, a kitöltő sorok (`.......`) és a whitespace összevonva; hogy értelmes szöveg-e, azt a felhasználó (a tartalomszűrő tokenizálása) dönti el. A szöveg a content stream sorrendjében jön (többhasábos oldalt nem rendez át).
 - Korlátok: `MAXOPS` (2 000 000 operátor / oldal: a rajzokon a szöveg előtt több százezer vonalrajzoló operátor is lehet; pypy-vel kb. 1,5 M operátor/s), `MAXTEXT` (100 000 karakter), `MAXDEPTH` (8 egymásba ágyazott form). Képként beszkennelt oldal (OCR kellene) és saját kódolású beágyazott font nélkülözhetetlen leképezés nélkül: nincs szöveg.
-- Ellenőrzés (helyi korpusz, 5804 PDF, első oldal): a pdfminer-rel (`extract_text(maxpages=1)`) összevetve a fájlok 73,7%-ánál a pdfminer szavainak legalább 90%-a megvan, 4,4%-ánál csak a szóhatárok térnek el, az átlagos szóegyezés mindkét irányban 0,96. Sebesség (egy szálon, 150 véletlen, 10 MB alatti fájl): maga a szövegkinyerés pypy alatt kb. 3-szor, CPython 3.14 alatt kb. 1,7-szer gyorsabb a pdfminernél; a teljes elemzéssel (`parse()`, minden stream kibontva) együtt 1 MB alatt hasonló, nagyobb fájloknál a pdfminer a gyorsabb (az csak az első oldalhoz szükséges objektumokat olvassa be). Medián fájlonként a teljes elemzéssel: pypy kb. 6–10 ms, CPython 3.14 kb. 21–31 ms. Szintetikus minták: `samples/text_*.pdf` (a várt szöveg a `samples/test_samples.py` `TEXT` táblájában); a `samples_new/run_tests.py` a `13a–13c` és `14a–14c` mintákon ellenőrzi a `pdf2str`-t, ha a modul importálható.
+- Ellenőrzés (helyi korpusz, 5804 PDF, első oldal): a pdfminer-rel (`extract_text(maxpages=1)`) összevetve a fájlok 73,7%-ánál a pdfminer szavainak legalább 90%-a megvan, 4,4%-ánál csak a szóhatárok térnek el, az átlagos szóegyezés mindkét irányban 0,96. Sebesség (egy szálon, egyszerre egy mérés; 1000 véletlen, 1–3 oldalas, 10 MB alatti fájl, összesen 338 MB, medián 120 KB; mindkettő az összes, legfeljebb 3 oldalt dolgozza fel: pdfminer `extract_text(maxpages=3)`, pdf2str `first_page_text(minwords=10**9, maxpages=3)`, a teljes `parse()`-szal együtt):
+
+  | | összesen | medián | 3 leglassabb fájl |
+  |---|---|---|---|
+  | pdf2str, pypy | 15,95 s | 4,1 ms | 0,57 / 0,95 / 1,16 s |
+  | pdfminer, pypy | 85,94 s | 6,5 ms | 9,2 / 10,4 / 15,2 s |
+  | pdf2str, CPython 3.14 | 89,00 s | 14,3 ms | 5,3 / 6,6 / 6,8 s |
+  | pdfminer, CPython 3.14 | 183,79 s | 21,3 ms | 9,2 / 22,1 / 23,0 s |
+
+  Összidőben a pdf2str pypy alatt kb. 5,4-szer, CPython alatt kb. 2,1-szer gyorsabb, mediánban kb. 1,5-szer. A különbség főleg a lassú fájlokból jön: a pdfminer elrendezés-elemzése sok szövegelemű / rajzos oldalon másodpercekig fut. A pdf2str idejéből a `parse()` pypy alatt 2,74 s, CPython alatt 13,76 s, a többi a szövegkinyerés. Nagy (több MB-os) fájloknál a teljes `parse()` dominál (minden streamet kibont), ott csak az első oldalt nézve a pdfminer lehet gyorsabb, mert az csak az ahhoz szükséges objektumokat olvassa be.
+
+  Ugyanez fájlonként (egy menet, pypy) méretsávokra bontva:
+
+  | méret | fájl | pdf2str átlag | pdf2str max | pdfminer átlag | pdfminer max |
+  |---|---|---|---|---|---|
+  | < 100 KB | 459 | 6,2 ms | 0,10 s | 17,5 ms | 0,57 s |
+  | 100–300 KB | 255 | 10,8 ms | 0,07 s | 76,8 ms | 11,6 s |
+  | 300 KB – 1 MB | 213 | 28,6 ms | 0,43 s | 142 ms | 8,2 s |
+  | 1–3 MB | 60 | 63 ms | 0,59 s | 493 ms | 16,0 s |
+  | 3–10 MB | 13 | 238 ms | 1,15 s | 941 ms | 10,4 s |
+
+  A pdf2str ideje a fájlmérettel arányosan nő (a `parse()` minden streamet kibont), egy adott méreten belül kis szórással: a méretkorlát egyben megbízható időkorlát. A pdfminer ideje inkább a tartalomtól (az első oldalak szövegelemeinek számától) függ, mint a mérettől: már 100–300 KB-os fájlon is lehet 10 s fölött.
+- Szintetikus minták: `samples/text_*.pdf` (a várt szöveg a `samples/test_samples.py` `TEXT` táblájában); a `samples_new/run_tests.py` a `13a–13c` és `14a–14c` mintákon ellenőrzi a `pdf2str`-t, ha a modul importálható.
 
 ## 5. Stream-dekóderek
 
