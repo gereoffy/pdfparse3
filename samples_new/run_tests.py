@@ -138,6 +138,30 @@ for name,desc in (('12a_enc_rc4_40.pdf','V1 R2 RC4 40 bit'),('12b_enc_rc4_128.pd
 buf=io.StringIO()
 with contextlib.redirect_stdout(buf): c,n,e=P.parse_pdf(load('12f_enc_userpw.pdf'))
 check('12f user password: not decrypted, no plaintext',n==0 and 'user password needed' in buf.getvalue() and not any(JS in bytes(d) or ATT in bytes(d) for d,nm in c),str([(nm,len(d)) for d,nm in c]))
+# 13: objektum-eleres a feldolgozas utan (get_obj, deref, objs_tree) es content_ops: katalogus -> oldal -> content stream
+#     (nyers / Flate / AES-128 titkositott) -> Tj/TJ szoveg, inline kep '(' adattal, font hivatkozas
+def pstr(x): return x.get() if isinstance(x,P.PDFString) else b''
+for name in ('13a_text_content_raw.pdf','13b_text_content_flate.pdf','13c_text_content_aes128.pdf'):
+    pdf,out=run(name)
+    try:
+        cat=pdf.deref(('R',pdf.root)); page=pdf.deref(pdf.deref(cat[b'/Pages'])[b'/Kids'][0])
+        top,st=pdf.get_obj(page[b'/Contents'][1])
+        with contextlib.redirect_stdout(io.StringIO()): ops=list(P.content_ops(bytes(st.decode())))
+        text=[pstr(a[0]) if op==b'Tj' else b''.join(pstr(x) for x in a[0]) for op,a in ops if op in (b'Tj',b'TJ')]
+        img=[a[1] for op,a in ops if op==b'BI']
+        font=pdf.deref(pdf.deref(page[b'/Resources'])[b'/Font'][b'/F1']).get(b'/BaseFont')
+        res=(text,img,font,len(ops),pdf.errors)
+    except Exception as ex:
+        res=repr(ex)
+    check(name[:3]+' text via get_obj/content_ops',res==([b'Hello',b'World'],[b'('],b'/Helvetica',9,[]),str(res))
+# objs_tree / num / content_ops egysegtesztek
+s=b'<</A 1/B [1 2 0 R (x)]/C <</D /N>>/F>>'
+objs=P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
+v,i=P.objs_tree(objs,0)
+check('objs_tree nested',i==len(objs) and v[b'/A']==1 and v[b'/B'][1]==('R',2) and pstr(v[b'/B'][2])==b'x' and v[b'/C']=={b'/D':b'/N'} and v[b'/F'] is None,str(v))
+check('num',(P.num(b'14.4'),P.num(b'-.5'),P.num(7),P.num(b'x',-1))==(14.4,-0.5,7,-1))
+ops=list(P.content_ops(b'/Span <</MCID 3>> BDC (a(b)c) Tj BI /W 3 /L 3 ID EI  EI (unterminated\n1 0 0 RG\n'))
+check('content_ops BDC/nested string/inline image with /L/unterminated string',[op for op,a in ops]==[b'BDC',b'Tj',b'BI',b'RG'] and ops[0][1][1]=={b'/MCID':3} and pstr(ops[1][1][0])==b'a(b)c' and ops[2][1][1]==b'EI ' and pstr(ops[3][1][0])==b'unterminated' and ops[3][1][1:]==[1,0,0],str(ops))   # (a lezaratlan string a sor vegen zarul, es operandus lesz)
 
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]

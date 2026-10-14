@@ -150,6 +150,18 @@ Fontos részletek:
 - `top_dict(objs)` (743): az obj törzsének dict-je, ha az `N G obj <<` alakú.
 - `objs_decodeparms(objs)` (570): a `/DecodeParms` (vagy `/DP`) dict; tömb esetén a predictort tartalmazót, különben az elsőt.
 
+### 4.4 Objektum-elérés a feldolgozás után és a content stream (a szövegkinyerő modulhoz)
+
+A `parse()` lefutása után a `PDFParser` példányon keresztül az objektumok szerkezetként is elérhetők; ezt a ráépülő szövegbányászó modul használja, a meglévő elemzést nem érinti.
+
+- `objs_tree(objs, i)`: a tokenlista `i`. elemétől kezdődő érték **teljes** szerkezete, az `objs_dict`-tel ellentétben a beágyazott dict-ekkel és tömbökkel együtt: `dict` / `list` / `int` / valós szám `bytes`-ként (`b'14.4'`) / név (`b'/Name'`) / `PDFString` / hivatkozás `('R', oid)` / kulcsszó. Visszaadja a következő indexet is. A mélység 64-re korlátozott (rosszindulatú, nagyon mélyen beágyazott adat ellen). `num(v, default)`: int vagy a lexer által bytes-ként adott valós szám értéke.
+- `content_ops(data)`: egy content stream operátorai generátorként, `(operátor, [operandusok])` párokban, az operandusok `objs_tree` értékek (a `TJ` tömbje lista, a `BDC` dict-je dict, a stringek `PDFString`). Az inline képet (`BI ... ID <adat> EI`) egyben adja: `(b'BI', [kép dict, nyers adat])`; az adat végét a `/L` (`/Length`) kulcs, ha van, különben az első whitespace-ek közti `EI` jelöli, és a bináris adatot nem tokenizálja (egy benne levő `(` miatt a lexer a stream hátralevő részét stringnek venné). A lezáratlan `(` stringet a lexer a sor végén zárja. Legfeljebb egymillió operátor.
+- `get_obj(oid)`: egy objektum `(érték, PDFStream)` párja az objektumszám alapján: a fájlban levő (a `dom` szerinti utolsó) változat, vagy egy object stream tagja (`xref_stm`, illetve az `objstm` térkép alapján; `objstm_members` bontja ki és gyorsítótárazza). Titkosított fájlnál a stringek és a stream már visszafejtve. Nem létező obj: `(None, None)`; a körkörös hivatkozás ellen a gyorsítótár előbb `(None, None)`-t jegyez.
+- `deref(v)`: `('R', oid)` hivatkozás (lánc) feloldása, legfeljebb 32 lépésben; más érték változatlan.
+- `root`: a legfrissebb trailer `/Root` obj-száma; `catalog`: az utoljára látott `/Type /Catalog` obj (ha a trailer nem használható).
+
+Tipikus használat: `cat = pdf.deref(('R', pdf.root))`, `pages = pdf.deref(cat[b'/Pages'])`, `page = pdf.deref(pages[b'/Kids'][0])`, `top, st = pdf.get_obj(page[b'/Contents'][1])`, `ops = list(content_ops(st.decode()))`. Teszt: `samples_new/13a–13c`.
+
 ## 5. Stream-dekóderek
 
 A `PDFStream.decode(predictor=False)` (332. sor) a `/Filter` lista sorrendjében alkalmazza a szűrőket. Nem dob kivételt: az **első** hiba a `stream.error`-ba, a megjegyzések a `stream.note`-ba kerülnek, és a részlegesen dekódolt adatot adja vissza. A képformátumoknál (`/DCTDecode`, `/JPXDecode`, `/JBIG2Decode`, `/CCITTFaxDecode`) megáll, a `/Crypt`-et átugorja, ismeretlen szűrőt kiír. Az inline-image rövidítéseket (`/Fl`, `/AHx`, `/A85`, `/LZW`, `/RL`) is elfogadja.
@@ -396,6 +408,7 @@ A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tar
 | `12a`–`12e_enc_*.pdf` | pypdf-fel generált titkosított PDF-ek (üres felhasználói jelszó, `owner` tulajdonosi jelszó): RC4-40 (V1 R2), RC4-128 (V2 R3), AES-128 (V4 R4), AES-256 R5, AES-256 R6; JS OpenAction, URI link és `payload.bin` csatolmány, mind visszafejtve, 0 hiba, a `CRYPT:` kiírás ellenőrizve |
 | `12f_enc_userpw.pdf` | felhasználói jelszavas (`secret`) AES-128: nem fejthető vissza, a kinyert tartalomban nincs nyílt szöveg |
 | `12g_enc_aes128_no_length.pdf` | a 12c a felső szintű `/Length` nélkül: V4 AESV2-nél a kulcs akkor is 16 byte |
+| `13a_text_content_raw.pdf`, `13b_text_content_flate.pdf`, `13c_text_content_aes128.pdf` | szöveges oldaltartalom (`Tj`, `TJ`, inline kép `(`-lel az adatban), nyersen, Flate-tel, ill. pypdf-fel AES-128-cal titkosítva (4.4): a `get_obj`/`deref`/`content_ops` lánc `Hello`, `World`-öt ad, az inline kép adata ép, a font feloldva |
 | `08_lzw_earlychange0_no_eod.pdf` (+ `08_payload.bin`) | három LZW csatolmány (10.9): `/EarlyChange 0` záró kód nélkül és alap EarlyChange záró kóddal (byte-ra egyeznek a payloaddal, a hiányzó EOD megjegyzés), valamint záró kód nélkül feloldhatatlan `/Length 99 0 R`-rel: ez az egyetlen hiba |
 
 - `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül. A titkosított minták (12a–12g) pypdf-fel készülnek, és csak akkor, ha hiányoznak (véletlen IV és só miatt nem determinisztikusak); pypdf nélkül a meglévő fájlok maradnak.

@@ -194,3 +194,22 @@ try:
         write('12g_enc_aes128_no_length.pdf',d[:i]+b' '*11+d[i+11:])   # (ugyanannyi szokoz: az offsetek nem valtoznak)
 except ImportError:
     print("(pypdf nincs: a 12a-12g titkositott mintak nem generalodnak ujra, a meglevok maradnak)")
+
+# 13: szoveges oldaltartalom az objektum-eleres / content_ops tesztjehez (README 4.4): Tj, TJ tomb, inline kep, amelynek
+#     adataban '(' van. 13a nyers, 13b Flate; 13c a 13b pypdf-fel AES-128-cal titkositva (csak ha hianyzik).
+import zlib
+TEXTCS=b'BT /F1 12 Tf 20 100 Td (Hello) Tj [(Wor) -30 (ld)] TJ ET\nq BI /W 1 /H 1 /CS /G /BPC 8 ID \x28 EI Q\n'
+TEXTBASE=[(1,b'<</Type/Catalog/Pages 2 0 R>>'),(2,b'<</Type/Pages/Kids[3 0 R]/Count 1>>'),
+    (3,b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>'),
+    (5,b'<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>')]
+d,_,_=build(TEXTBASE+[(4,stream(b'<<>>',TEXTCS))]); write('13a_text_content_raw.pdf',d)
+d,_,_=build(TEXTBASE+[(4,stream(b'<</Filter/FlateDecode>>',zlib.compress(TEXTCS)))]); write('13b_text_content_flate.pdf',d)
+try:
+    from pypdf import PdfReader, PdfWriter
+    if not os.path.exists(os.path.join(HERE,'13c_text_content_aes128.pdf')):
+        w=PdfWriter(clone_from=PdfReader(os.path.join(HERE,'13b_text_content_flate.pdf')))
+        w.encrypt(user_password='',owner_password='owner',algorithm='AES-128')
+        with open(os.path.join(HERE,'13c_text_content_aes128.pdf'),'wb') as f: w.write(f)
+        print("13c_text_content_aes128.pdf (pypdf)")
+except ImportError:
+    pass
