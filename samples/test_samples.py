@@ -195,6 +195,10 @@ def test_text():
         assert pdf2str.first_page_text(p,minwords=1000,maxops=10).count('\n')==1
     finally: pdf2str.MINOPSPAGE=m
     assert pdf2str.first_page_text(p,minwords=1000,maxops=8).endswith('\nnever shown')
+    # az Identity-H masodik menete (Unicode kodok) akkor is lefut, ha az elso menet kimeritette a keretet (5 operator)
+    p=pdfparse.PDFParser(SAMPLES['text_identity_cid'])
+    with contextlib.redirect_stdout(io.StringIO()): p.parse()
+    assert pdf2str.first_page_text(p,maxops=5)=='Unicode identity text'
 
 def test_encrypted():
     # Standard security handler: ures felhasznaloi jelszoval visszafejtve (RC4 / AES-128 / AES-256), a jelszavas nem

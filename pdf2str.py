@@ -495,14 +495,17 @@ def _page_text(p,page,res,budget):
     data=b'\n'.join(_stream_data(p,x) for x in (p.deref(c) if type(p.deref(c))==list else [c]))
     res=res if type(res)==dict else {}
     box=page_box(p,page)
-    pg=_Page(p,budget[0],box)
+    m=budget[0]
+    pg=_Page(p,m,box)
     try: pg.run(data,res,(1,0,0,1,0,0),0,set())
     finally: budget[0]-=pg.nops
-    if budget[0]>0 and _identity_fonts(pg.fonts):
-        pg2=_Page(p,budget[0],box)
+    if _identity_fonts(pg.fonts):
+        # (a masodik menet ugyanazt az oldalt dolgozza fel ujra, a felismert Unicode kodokkal: ugyanannyi operatort
+        # kap, mint az elso, es a keretbol nem vonjuk le meg egyszer, kulonben a kimerult keret miatt az oldal
+        # szovege eltunne)
+        pg2=_Page(p,m,box)
         pg2.fonts=pg.fonts
-        try: pg2.run(data,res,(1,0,0,1,0,0),0,set())
-        finally: budget[0]-=pg2.nops
+        pg2.run(data,res,(1,0,0,1,0,0),0,set())
         pg=pg2
     return _clean(''.join(pg.out))
 
