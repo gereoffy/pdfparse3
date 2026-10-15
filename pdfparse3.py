@@ -20,6 +20,7 @@ import traceback
 import zlib
 import re
 import struct
+import bisect
 import hashlib
 
 WHITESPACE=b'\x00\t\n\x0c\r '
@@ -546,6 +547,41 @@ class PDFStream():
         except Exception:
             return "Stream(%d/%d)"%(len(self.data),unc)
 
+re_strspec=re.compile(rb'[()\\]')
+_strcache=[None]   # (d, pend, [a '(' / ')' poziciok], [melyseg utana], [a melyseg minimuma innen a vegeig])
+
+# a (string) vege: a lezaro ')' utani pozicio, vagy None, ha pend elott nincs lezarva. Csak a ( ) \ bajtokon lep (C-ben
+# keresve). A le nem zart string vegigolvasasa utan a zarojel-melysegeket megjegyezzuk: ha ugyanebben a tartomanyban
+# egy kesobbi '(' is le nem zart stringet kezd (pl. binaris szemet sok '(' bajttal a %%EOF utan), az a melysegekbol
+# azonnal latszik, igy a sok le nem zart string sem negyzetes ideju.
+def _string_end(d,p,pend):
+    c=_strcache[0]
+    if c is not None and c[0] is d and c[1]==pend:
+        pos,dep,smin=c[2],c[3],c[4]
+        i=bisect.bisect_left(pos,p-1)
+        if i<len(pos) and pos[i]==p-1 and d[p-1]==0x28 and (i+1>=len(pos) or smin[i+1]>=dep[i]): return None
+    depth=1
+    pos=[p-1]
+    dep=[1]
+    while True:
+        m=re_strspec.search(d,p,pend)
+        if m is None: break
+        q=m.start()
+        c=d[q]
+        if c==0x5C:
+            p=q+2          # backslash: a kovetkezo bajt (pl. \( \) \\) nem szamit
+            continue
+        p=q+1
+        depth+=1 if c==0x28 else -1
+        if depth<=0: return p
+        pos.append(q)
+        dep.append(depth)
+    smin=dep[:]
+    for k in range(len(smin)-2,-1,-1):
+        if smin[k+1]<smin[k]: smin[k]=smin[k+1]
+    _strcache[0]=(d,pend,pos,dep,smin)
+    return None
+
 def parse_pdf_param(d,p,pend,err=print_err):
 
     while p<pend:
@@ -613,7 +649,11 @@ def parse_pdf_param(d,p,pend,err=print_err):
         if c==0x28:   # (string)
             s0=p
             in_str=1
-            while p<pend:
+            e=_string_end(d,p,pend)
+            if e is None and (d.find(b'\r',s0,pend)>=0 or d.find(b'\n',s0,pend)>=0):
+                p=pend   # (le nem zart: lent a sorvegnel zarjuk le, a bajtokat nem kell vegigolvasni)
+            send=pend if e is None else e
+            while p<send:
                 c=d[p]
                 p+=1
                 if c==0x28:   # (

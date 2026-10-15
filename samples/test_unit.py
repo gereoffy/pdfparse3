@@ -154,6 +154,26 @@ def test_regex_speed():
     starts=[m.start() for m in P.re_objstart.finditer(d)]
     assert len(starts)==2 and P.re_structure.search(d,20) and time.time()-t<2
 
+def test_unterminated_strings():
+    # le nem zart string: az elso sorvegnel zarul; sorvege nelkul a vegeig tart
+    def u(b):
+        p,x=P.parse_pdf_param(b,0,len(b),lambda m:None)
+        return p,x.get()
+    assert u(b'(abc\ndef')==(4,b'abc')
+    assert u(b'(a\\)b')==(5,b'a)b')            # (\) nem zar, sorvege nincs: a vegeig)
+    assert u(b'(a(b)c')==(6,b'a(b)c')
+    assert u(b'(a\\')==(3,b'a\\')               # (a vegen allo backslash)
+    assert u(b'(a\\\\)b')==(5,b'a\\')           # (\\ utan a ) mar zar)
+    # binaris szemet sok '(' bajttal (pl. a %%EOF utan): nem lehet negyzetes ideju
+    import time
+    d=b'\n'.join(b'\x02\x8a\x00(\xa0'*40 for i in range(1500))
+    t=time.time()
+    p,n=0,0
+    while p<len(d):
+        p,x=P.parse_pdf_param(d,p,len(d),lambda m:None)
+        n+=1
+    assert n>1000 and time.time()-t<2
+
 def test_predictor():
     raw=bytes([2,1,2,3, 2,1,1,1])                # PNG Up
     assert P.unpredict(raw,{b'/Predictor':12,b'/Columns':3})==bytes([1,2,3,2,3,4])
