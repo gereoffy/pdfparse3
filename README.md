@@ -26,10 +26,10 @@ content, errcnt, errors = parse_pdf(data, debug=False, validate=False)
 | Név | Típus | Jelentés |
 |---|---|---|
 | `data` | `bytes` | a teljes fájl tartalma |
-| `debug` | bool | részletes kiírás (tokenek, xref-tábla, DOM) |
-| `validate` | bool | csak ellenőrzés: a kinyert adat helyett `None` kerül a `content`-be, és lehetőség szerint csak az xref által mutatott objektumokat járja be |
+| `debug` | `bool` | részletes kiírás (tokenek, xref-tábla, DOM) |
+| `validate` | `bool` | csak ellenőrzés: a kinyert adat helyett `None` kerül a `content`-be, és lehetőség szerint csak az xref által mutatott objektumokat járja be |
 | `content` | `[(data, filename), ...]` | a kinyert tartalmak; `filename` a 2.3 szerinti név |
-| `errcnt` | int | a hibalista **pontszáma** (`score()`): a sérülést jelző, 10-es súlyú hibák összege, plusz a figyelmeztetések összege legfeljebb 9-ig. Jelentése: 0 = hibátlan, 1–9 = nem szabványos, de használható, ≥10 = sérült (2.4) |
+| `errcnt` | `int` | a hibalista **pontszáma** (`score()`): a sérülést jelző, 10-es súlyú hibák összege, plusz a figyelmeztetések összege legfeljebb 9-ig. Jelentése: 0 = hibátlan, 1–9 = nem szabványos, de használható, ≥10 = sérült (2.4) |
 | `errors` | `[(súly, üzenet), ...]` | az egyes hibák |
 
 Ha a fájl nem PDF (nincs benne `%PDF-` vagy `%FDF-` fejléc): `(None, 99, [(99, "not pdf")])`.
