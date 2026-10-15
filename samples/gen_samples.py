@@ -296,6 +296,13 @@ def gen_text():
         (9,st(b'',b'BT /F1 8 Tf 72 700 Td ('+words('three')+b') Tj ET')),
         (10,b'<< /Type /Page /Parent 5 0 R /Contents 11 0 R >>'),
         (11,st(b'',b'BT /F1 12 Tf 72 700 Td (never shown) Tj ET'))])
+    # az oldalon kivuli szoveg (pl. tobbnyelvu nyomdai ivbol a /MediaBox-szal "kivagott" oldal) kimarad: a /CropBox a
+    # /Pages csomoponton (oroklott); a MediaBox-on belul, de a CropBox-on kivul es a negativ koordinatan levo szoveg nem
+    # latszik. A lathatatlan (3 Tr) szoveg viszont marad (OCR reteg)
+    P['text_outside_box']=build([cat,(2,b'<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 600 400] /CropBox [0 0 300 400] >>'),
+        (3,b'<< /Type /Page /Parent 2 0 R /Resources '+helv+b' /Contents 4 0 R >>'),
+        (4,st(b'',b'BT /F1 12 Tf 50 300 Td (visible) Tj 400 0 Td (cropped) Tj ET BT /F1 12 Tf -900 100 Td (far away) Tj ET '
+                  b'BT 3 Tr /F1 12 Tf 50 200 Td (ocr layer) Tj ET'))])
     return P
 
 # szerkezeti hibak: szemet a header elott, csonka file, iro program altal elrontott xref

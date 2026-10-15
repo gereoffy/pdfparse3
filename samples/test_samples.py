@@ -71,6 +71,7 @@ EXPECTED={
     'text_identity_cid':   (0, 0, [], []),
     'text_gid_cid':        (0, 0, [], []),
     'text_multipage':      (0, 0, [], []),
+    'text_outside_box':    (0, 0, [], []),
     'text_encrypted':      (0, 0, [('pdfstream.js',b'app.alert("encrypted js");'),('secret.exe',b'MZ secret attachment')], []),
     'uri_js':              (0, 0, [('pdfstream.launch',b'/F javascript:void(0)')],
                             [('pdfstream.uri.js',b'app.alert(1)'),('pdfstream.uri.js',b"var x=window.open('/a')")]),   # (+ pdfstream.urls, l. test_urls)
@@ -170,6 +171,7 @@ TEXT={'text_tounicode':'\u00c1rv\u00edzt\u0171r\u0151\nt\u00fck\u00f6rf\u00far\u
       'text_encrypted':'encrypted',                              # AES, ures felhasznaloi jelszo
       'text_multipage':'Cover page\n'+' '.join('two%d'%i for i in range(60))+'\n'+' '.join('three%d'%i for i in range(60)),
                                                                  # fedolap: + a kovetkezo oldalak a 100 szoig
+      'text_outside_box':'visible\nocr layer',                  # a CropBox-on / MediaBox-on kivuli szoveg kimarad
       'basic':None,'notpdf':None}                                # (nincs szoveg / nem pdf)
 
 def test_text():
@@ -184,6 +186,15 @@ def test_text():
     assert pdf2str.first_page_text(p,minwords=0)=='Cover page'
     assert pdf2str.first_page_text(p,minwords=1000).endswith('\nnever shown')
     assert pdf2str.first_page_text(p,minwords=1000,maxpages=2).count('\n')==1
+    # maxops: kozos keret az oldalakra (oldalankent 5 operator: BT Tf Td Tj ET), az elso utani oldalak legalabb
+    # MINOPSPAGE-et kapnak
+    m=pdf2str.MINOPSPAGE
+    try:
+        pdf2str.MINOPSPAGE=0
+        assert pdf2str.first_page_text(p,minwords=1000,maxops=8)=='Cover page'
+        assert pdf2str.first_page_text(p,minwords=1000,maxops=10).count('\n')==1
+    finally: pdf2str.MINOPSPAGE=m
+    assert pdf2str.first_page_text(p,minwords=1000,maxops=8).endswith('\nnever shown')
 
 def test_encrypted():
     # Standard security handler: ures felhasznaloi jelszoval visszafejtve (RC4 / AES-128 / AES-256), a jelszavas nem

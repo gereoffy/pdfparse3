@@ -29,8 +29,13 @@ import pdfparse3 as pdfparse
 from pdfparse3 import PDFString,num
 
 MAXDEPTH=8          # form XObject egymasba agyazas
-MAXOPS=2000000      # operator / oldal (a rajzokon a szoveg elott sok szazezer vonalrajzolo operator is lehet;
-                    # pypy-vel kb. 1.5M operator/s, CPythonnal kb. 0.2M/s)
+MAXOPS=100000       # operator / hivas (az osszes feldolgozott oldalra egyutt). Egy teleirt szoveges oldal tobbnyire
+                    # 1-20 ezer, a cellankent / szovegdarabonkent kulon blokkba tett (Word tablazat, adatlap) 50 ezerig;
+                    # a 100 ezer folottiek a helyi korpuszon szinte mind rajzok (CAD), azok feliratai nem kellenek.
+                    # pypy-vel kb. 1.5M operator/s, CPythonnal kb. 0.2M/s
+MINOPSPAGE=20000    # az elso utani oldalak legalabb ennyit kapnak, akkor is, ha a keret elfogyott (egy grafikus
+                    # fedolap ne vigye el a teljes keretet a kovetkezo, szoveges oldal elol); legrosszabb eset:
+                    # maxops + (maxpages-1) * MINOPSPAGE
 MAXTEXT=100000      # karakter / oldal
 MAXPAGES=4          # legfeljebb ennyi oldal, ha az elsokon kevesebb a szo, mint a minwords
 MINWORDS=100        # (first_page_text alapertelmezes)
@@ -299,7 +304,7 @@ def _mul(m,n):
     return (a*A+b*C,a*B+b*D,c*A+d*C,c*B+d*D,e*A+f*C+E,e*B+f*D+F)
 
 class _Page():
-    def __init__(self,p,maxops=MAXOPS):
+    def __init__(self,p,maxops=MAXOPS,box=None):
         self.p=p
         self.maxops=maxops
         self.out=[]
@@ -310,6 +315,7 @@ class _Page():
         self.lasty=None
         self.lastsize=0
         self.nops=0
+        self.box=box       # (x0,y0,x1,y1): az ezen kivul kezdodo szoveg nem latszik, kimarad (None: nincs szures)
 
     def font(self,res,name):
         if type(name)!=bytes: return None   # (hibas operandus: lista / dict / szam)
@@ -385,9 +391,14 @@ class _Page():
         if f is None: return tm
         m=_mul(tm,ctm)
         x,y=m[4],m[5]
+        glyphs=f.decode(b)
+        if self.box and not (self.box[0]<=x<=self.box[2] and self.box[1]<=y<=self.box[3]):
+            for c,u in glyphs:   # (az oldalon kivul: nem latszik, csak a pozicio halad)
+                w=f.width(c)/1000.0*st['fs']+st['tc']+(st['tw'] if f.codelen==1 and c==32 else 0)
+                tm=_mul((1,0,0,1,w*st['th'],0),tm)
+            return tm
         scale=(abs(m[2])+abs(m[3])) or 1
         size=st['fs']*scale
-        glyphs=f.decode(b)
         # csak ismeretlen glif (pl. a szovegbe kepkent rajzolt ekezetes betu egy Type3 fontban, nulla szelesseggel,
         # a glif tetejen levo kezdoponttal): a sor es a betumeret a korulotte levo szovegee marad
         lone=(self.lasty is not None and self.lastsize and glyphs and all(u is None for c,u in glyphs)
@@ -454,22 +465,54 @@ def _clean(text):
     t=re.sub(r' *\n[ \n]*','\n',t).strip()
     return t or None
 
-def page_text(p,page,res,maxops=MAXOPS):
+# az oldal lathato terulete: a /CropBox (a /MediaBox-szal metszve), ha nincs, a /MediaBox (oroklott is), 2% turessel.
+# Az ezen kivul kezdodo szoveg nem latszik: pl. egy nagy, tobbnyelvu nyomdai ivbol csak a /MediaBox atallitasaval
+# "kivagott" oldal, ahol a tobbi nyelv szovege a content streamben maradt. A lathatatlan (3 Tr) szoveg viszont marad:
+# az a lathato tartalom keresheto masolata (szkennelt kep OCR retege, vektorgorbekke alakitott betuk, pl. CAD, Lucid).
+def page_box(p,page):
+    def inh(key):
+        node=page
+        for i in range(64):
+            if type(node)!=dict: return None
+            if key in node: return p.deref(node[key])
+            node=p.deref(node.get(b'/Parent'))
+    def rect(v):
+        if type(v)!=list or len(v)<4: return None
+        x=[num(p.deref(t),None) for t in v[:4]]
+        if None in x: return None
+        r=(min(x[0],x[2]),min(x[1],x[3]),max(x[0],x[2]),max(x[1],x[3]))
+        return r if r[2]>r[0] and r[3]>r[1] else None
+    m,c=rect(inh(b'/MediaBox')),rect(inh(b'/CropBox'))
+    if m and c: c=(max(m[0],c[0]),max(m[1],c[1]),min(m[2],c[2]),min(m[3],c[3]))
+    b=c if c and c[2]>c[0] and c[3]>c[1] else m
+    if b is None: return None
+    t=0.02*max(b[2]-b[0],b[3]-b[1])
+    return (b[0]-t,b[1]-t,b[2]+t,b[3]+t)
+
+# budget: [a meg felhasznalhato operatorok szama], a feldolgozas csokkenti (a first_page_text oldalai kozos keretbol)
+def _page_text(p,page,res,budget):
     c=page.get(b'/Contents')
     data=b'\n'.join(_stream_data(p,x) for x in (p.deref(c) if type(p.deref(c))==list else [c]))
     res=res if type(res)==dict else {}
-    pg=_Page(p,maxops)
-    pg.run(data,res,(1,0,0,1,0,0),0,set())
-    if _identity_fonts(pg.fonts):
-        fonts=pg.fonts
-        pg=_Page(p,maxops)
-        pg.fonts=fonts
-        pg.run(data,res,(1,0,0,1,0,0),0,set())
+    box=page_box(p,page)
+    pg=_Page(p,budget[0],box)
+    try: pg.run(data,res,(1,0,0,1,0,0),0,set())
+    finally: budget[0]-=pg.nops
+    if budget[0]>0 and _identity_fonts(pg.fonts):
+        pg2=_Page(p,budget[0],box)
+        pg2.fonts=pg.fonts
+        try: pg2.run(data,res,(1,0,0,1,0,0),0,set())
+        finally: budget[0]-=pg2.nops
+        pg=pg2
     return _clean(''.join(pg.out))
+
+def page_text(p,page,res,maxops=MAXOPS):
+    return _page_text(p,page,res,[maxops])
 
 # Az elso oldal szovege; ha abban kevesebb a szo, mint a minwords (fedolap: cim, logo, nehany szo), a kovetkezo
 # oldalak szovege is hozzafuzodik (sortoressel), amig a minwords meg nincs, legfeljebb maxpages oldalig.
-# minwords=0: csak az elso oldal.
+# minwords=0: csak az elso oldal. maxops: kozos keret az osszes oldalra; az elso utani oldalak legalabb MINOPSPAGE-et
+# kapnak.
 # errors: ha lista, egy kivetel eseten ide kerul a traceback (roviditve), pl. tomeges teszteleshez (pdfscan); a hibas
 # oldal szovege kimarad (a tobbie megmarad), ha egyik sincs: None
 def first_page_text(p,maxops=MAXOPS,errors=None,minwords=MINWORDS,maxpages=MAXPAGES):
@@ -479,8 +522,11 @@ def first_page_text(p,maxops=MAXOPS,errors=None,minwords=MINWORDS,maxpages=MAXPA
     except Exception:
         if errors is not None: errors.append(traceback.format_exc()[-2000:])
         return None
-    for page,res in pl:
-        try: t=page_text(p,page,res,maxops)
+    budget=[maxops]
+    for k,(page,res) in enumerate(pl):
+        if k and budget[0]<MINOPSPAGE: budget[0]=MINOPSPAGE
+        if budget[0]<=0: break
+        try: t=_page_text(p,page,res,budget)
         except Exception:   # (szandekosan rontott pdf se allitsa le a hivot: a szoveg ilyenkor nincs)
             if errors is not None: errors.append(traceback.format_exc()[-2000:])
             t=None
