@@ -350,11 +350,11 @@ A fordított irány (`LF -> CRLF`) szöveges módú átvitel nyoma (ASCII módú
 - Minden streamet kibont (képeket is), ami nagy fájloknál lassú, de ez a tömörítési hibák felderítéséhez kell.
 - A `pdf2str` korlátai a 4.5 pontban: nincs OCR, a saját kódolású beágyazott font és a `/ToUnicode` nélküli (nem Unicode-kódú) CID font karakterei kimaradnak, a többhasábos oldalt nem rendezi át.
 
-## 10. Talált hibák és állapotuk
+## 10. Javítási napló: az eredeti változat hibái (mind javítva)
 
-Prioritás szerint. Minden pont az adott bemenettel **reprodukálva** lett, és mind **javítva** (egy-egy külön commit), regressziós tesztjeik a `samples_new/` könyvtárban vannak (11. fejezet). A 10.1–10.7 pontokban a sorszámok az **eredeti** (`d993039`) változatra vonatkoznak; a többi pont függvénynévvel hivatkozik.
+**Ebben a fejezetben nincs nyitott hiba.** Az itt leírt hibák az eredeti (`d993039`) változat átnézésekor és a későbbi ellenőrzésekkor kerültek elő, mindegyik az adott bemenettel **reprodukálva** lett, és mindegyik **javítva van a repóban** (egy-egy külön commit, az alpontok elején megnevezve). A fejezet azért marad meg, mert dokumentálja, miért úgy működik a kód, ahogy, és mert a `samples_new/` regressziós mintái (11. fejezet) ezekre a pontokra hivatkoznak. Az alpontok a hiba eredeti leírását, a reprodukciót és a megvalósított javítást tartalmazzák; a 10.1–10.7 pontokban a sorszámok az **eredeti** változatra vonatkoznak, a többi pont függvénynévvel hivatkozik.
 
-### 10.1 A buffer legvégén álló szám/kulcsszó utolsó karaktere elveszik – `parse_pdf_param`, 501–510. sor
+### 10.1 A buffer legvégén álló szám/kulcsszó utolsó karaktere elveszik – `parse_pdf_param`, 501–510. sor (javítva)
 
 > **Javítva**: commit `22a058a`. Teszt: `samples_new/01_objstm_last_token.pdf`.
 
@@ -369,9 +369,9 @@ parse_pdf_obj(b'12 0 R',0,6)  -> [12, 0, b'']
 objstm: '1 0 2 8 <</A 1>>612'  -> #2 = 61   (612 helyett)
 ```
 
-Hatás: az objektum-streamek **utolsó** obj-ának utolsó tokenje (ha a stream nem whitespace-szel végződik), valamint az `objstm` régió-határon záródó tokenek. A fő fájlnál ritkán érint (a `%%EOF` és az `endobj` külön kezelt), de pl. egy `/Count 5`-tel záródó objstm-obj oldalszáma elveszik. A javítás: a ciklus szerkezetének megfordítása (először hozzáfűzés, majd a következő karakter vizsgálata `p<pend` feltétellel).
+Hatás: az objektum-streamek **utolsó** obj-ának utolsó tokenje (ha a stream nem whitespace-szel végződik), valamint az `objstm` régió-határon záródó tokenek. A fő fájlnál ritkán érint (a `%%EOF` és az `endobj` külön kezelt), de pl. egy `/Count 5`-tel záródó objstm-obj oldalszáma elveszik. A megvalósított javítás: a ciklus szerkezetének megfordítása (először hozzáfűzés, majd a következő karakter vizsgálata `p<pend` feltétellel).
 
-### 10.2 Nem numerikus `startxref` érték → 10-es súlyú "exception" hiba tracebackkel – `parse`, 851. sor
+### 10.2 Nem numerikus `startxref` érték → 10-es súlyú "exception" hiba tracebackkel – `parse`, 851. sor (javítva)
 
 > **Javítva**: commit `3250f1b`. Teszt: `samples_new/02_startxref_no_value.pdf`.
 
@@ -379,9 +379,9 @@ Az `int(d[o:q])` a külső `try`-ba esik, így pl. egy `startxref\n%%EOF` (hián
 
 Reprodukció: minimális fájl `startxref\n%%EOF` végződéssel → `errcnt=11`, az első hiba egy traceback.
 
-A javítás: az `int()` külön `try`-ba, célzott üzenettel (`XREF: invalid startxref value`), és utána a meglévő `rfind`-es tartalék futtatása.
+A megvalósított javítás: az `int()` külön `try`-ba, célzott üzenettel (`XREF: invalid startxref value`), és utána a meglévő `rfind`-es tartalék futtatása.
 
-### 10.3 Hivatkozott `/Length` + tömörítetlen csatolmány, amelyben `endstream` szerepel → a csatolmány csonkul – `parse_pdf_obj`, 642. és 667. sor
+### 10.3 Hivatkozott `/Length` + tömörítetlen csatolmány, amelyben `endstream` szerepel → a csatolmány csonkul – `parse_pdf_obj`, 642. és 667. sor (javítva)
 
 > **Javítva**: commit `06c024d` (`resolve_length`, `lenref`). Teszt: `samples_new/03_indirect_length_embedded_pdf.pdf`.
 
@@ -389,9 +389,9 @@ Indirekt `/Length` esetén mindig az első `endstream` szövegig tart a stream. 
 
 Reprodukció: beágyazott 60 byte-os mini-PDF, `/Length 5 0 R` → 38 byte tartalom, plusz a hamis hiba.
 
-A javítás: a `PDFParser.resolve_length` az `obj_starts()` gyorsítótárból megkeresi a `N G obj <szám> endobj` objektumot (az utolsó előfordulást), a `parse_pdf_obj` ezt a `lenref` visszahíváson kapja, és a hosszat csak akkor használja, ha utána tényleg `endstream` áll, ahogy a közvetlen `/Length`-nél. A rossz feloldás így nem árt: marad az `endstream` keresése.
+A megvalósított javítás: a `PDFParser.resolve_length` az `obj_starts()` gyorsítótárból megkeresi a `N G obj <szám> endobj` objektumot (az utolsó előfordulást), a `parse_pdf_obj` ezt a `lenref` visszahíváson kapja, és a hosszat csak akkor használja, ha utána tényleg `endstream` áll, ahogy a közvetlen `/Length`-nél. A rossz feloldás így nem árt: marad az `endstream` keresése.
 
-### 10.4 Csatolmány-nevek sorrend alapján párosulnak – `analyze_obj`, 1470–1477. sor és `parse_stream`, 1216–1218. sor
+### 10.4 Csatolmány-nevek sorrend alapján párosulnak – `analyze_obj`, 1470–1477. sor és `parse_stream`, 1216–1218. sor (javítva)
 
 > **Javítva**: commit `51c9808` (`efnames`, `filestreams`, `name_files`; a `streamname` megszűnt), kiegészítve a hivatkozott `/EF 39 0 R` alakkal (`efrefs`, `efdicts`), amelyet a privát minták összehasonlító futása hozott elő. Teszt: `samples_new/04a_...`, `04b_...`, `04c_...`.
 
@@ -399,9 +399,9 @@ A Filespec neve a `streamname` változóba kerül, és a **következő** `/Embed
 
 Reprodukció: Filespec(alpha, EF→3), Filespec(beta, EF→4), stream 3 (`AAAAA`), stream 4 (`BBBBB`) → `[(AAAAA, 'beta.txt'), (BBBBB, 'pdfstream.dat')]`.
 
-A javítás: az `analyze_obj` az `/EF` dict `/F`/`/UF` hivatkozásait `efnames[stream oid] = név` térképbe teszi, a `parse_stream` a csatolmány `content`-indexét obj-szám szerint jegyzi (`filestreams`), és a feldolgozás végén a `name_files` párosítja őket. A `streamname` mechanizmus megszűnt. Ez a többszörös csatolmányú (pl. PDF/A-3, ZUGFeRD) fájloknál számít.
+A megvalósított javítás: az `analyze_obj` az `/EF` dict `/F`/`/UF` hivatkozásait `efnames[stream oid] = név` térképbe teszi, a `parse_stream` a csatolmány `content`-indexét obj-szám szerint jegyzi (`filestreams`), és a feldolgozás végén a `name_files` párosítja őket. A `streamname` mechanizmus megszűnt. Ez a többszörös csatolmányú (pl. PDF/A-3, ZUGFeRD) fájloknál számít.
 
-### 10.5 `rfind(b'xref')` a korábbi `startxref` kulcsszóban is talál – 893., 1050. és 1270. sor
+### 10.5 `rfind(b'xref')` a korábbi `startxref` kulcsszóban is talál – 893., 1050. és 1270. sor (javítva)
 
 > **Javítva**: commit `837eeba` (`rfind_xref`, `re_xrefkw`). Teszt: `samples_new/05_bad_startxref_xrefstream_prev_section.pdf`.
 
@@ -409,9 +409,9 @@ A `xref` részstringje a `startxref`-nek. Ha a fájl csak xref streameket haszn�
 
 Reprodukció: két szekciós fájl, a második xref stream → `rfind` = a korábbi `startxref`+5.
 
-A javítás: közös `rfind_xref(start, end)` segédfüggvény a `re_xrefkw` mintával (`(?<![a-zA-Z])xref(?![a-zA-Z])`), amely az utolsó találatot adja; a három hely ezt hívja.
+A megvalósított javítás: közös `rfind_xref(start, end)` segédfüggvény a `re_xrefkw` mintával (`(?<![a-zA-Z])xref(?![a-zA-Z])`), amely az utolsó találatot adja; a három hely ezt hívja.
 
-### 10.6 `self.startxref` a `base` korrekció előtti értéket tárolja – 852. sor
+### 10.6 `self.startxref` a `base` korrekció előtti értéket tárolja – 852. sor (javítva)
 
 > **Javítva**: commit `fbf138b`. Teszt: `samples_new/06_junk_before_header.pdf`.
 
@@ -419,9 +419,9 @@ Ha a fejléc előtt szemét van és az offsetek a fejléchez relatívak (`base=h
 
 Reprodukció: 8 byte szemét + helyes fájl → `base=8`, `startxref=(40, ...)`, `find_last_xref=48`.
 
-A javítás: a `self.startxref` a `base` korrekció után, közvetlenül az xref feldolgozása előtt kap értéket.
+A megvalósított javítás: a `self.startxref` a `base` korrekció után, közvetlenül az xref feldolgozása előtt kap értéket.
 
-### 10.7 Négyzetes idejű részek nagy, sérült fájlokon
+### 10.7 Négyzetes idejű részek nagy, sérült fájlokon (javítva)
 
 > **Javítva**: commit `6c32c09` (`walk_xref` az `obj_starts()`-ból, `counts_upto`). Teszt: `samples_new/07_validate_bad_xref_offsets.pdf` és a `counts_upto` egységteszt.
 
@@ -438,35 +438,35 @@ Egy 50 MB-os, több ezer rossz bejegyzésű fájlnál ez percekig tarthatott. Ne
 - **Kiírások mérete**: a közvetlen `/JS` string és az `embedded image` kiírása is 256 byte-ra vágva (commit `1f3c4fa`); a `content` teljes marad.
 - **`os.listdir`** a parancssori indításban: nem létező útvonalnál kivétellel leáll. Nem javítjuk, csak tesztelésnél fut, jó paraméterrel.
 
-### 10.9 LZW: `/EarlyChange 0` hamis „invalid code” hibák, hiányzó EOD kód hibaként – `LZWDecode`
+### 10.9 LZW: `/EarlyChange 0` hamis „invalid code” hibák, hiányzó EOD kód hibaként – `LZWDecode` (javítva)
 
 > **Javítva**: commitok `a729b3d` (EarlyChange), `eaf0415` (EOD megjegyzés) és `2e3b28d` (csak biztos hossznál). Teszt: `samples_new/08_lzw_earlychange0_no_eod.pdf`.
 
 A privát minták összehasonlító futásán derült ki (`err_lzw` könyvtár): egy fájl 5 LZW streamje mind `/EarlyChange 0`-val készült, és az író egyiknél sem írta ki a záró (EOD) kódot. A dekóder csak az EarlyChange=1 szélességváltást ismerte, ezért a 511./512. kód után két streamnél hamis „invalid code 1023 (dict size 511)” / „invalid code 936” hibát adott, és a kibontás a kép töredékénél megállt (10937 byte a 244280 helyett). A másik három streamnél a hiányzó EOD kód volt hiba, holott mind az 5 stream pontosan a kép méretére bomlik ki. A régi kód egyiküknél (obj 97) azért nem szólt, mert a hivatkozott `/Length` feloldása előtt a sorvége byte-ot is az adathoz vette, és annak első 5 bitje véletlenül kiegészítette a félbemaradt STOP kódot.
 
-A javítás: a `LZWDecode` `early` paramétert kap a stream `/DecodeParms`-ából (a szélességváltás feltétele `dictlen + early >= 2^bits`). A buffer vége EOD nélkül `note` lesz a dekódolt mérettel, ha a stream vége biztos (`PDFStream.exact`: a `parse_pdf_obj` a `/Length` után megtalálta az `endstream`-et, tehát az író pont ennyit írt ki, csak az EOD-t hagyta el), és `error` marad, ha az `endstream` keresése döntött (rossz vagy feloldhatatlan `/Length`, hiányzó `endstream`), mert az csonkolásra is utalhat. A deflate hiányzó adler32-jével analóg döntés, a hossz-bizonyosság feltételével.
+A megvalósított javítás: a `LZWDecode` `early` paramétert kap a stream `/DecodeParms`-ából (a szélességváltás feltétele `dictlen + early >= 2^bits`). A buffer vége EOD nélkül `note` lesz a dekódolt mérettel, ha a stream vége biztos (`PDFStream.exact`: a `parse_pdf_obj` a `/Length` után megtalálta az `endstream`-et, tehát az író pont ennyit írt ki, csak az EOD-t hagyta el), és `error` marad, ha az `endstream` keresése döntött (rossz vagy feloldhatatlan `/Length`, hiányzó `endstream`), mert az csonkolásra is utalhat. A deflate hiányzó adler32-jével analóg döntés, a hossz-bizonyosság feltételével.
 
-### 10.10 Objstm: az obj-határok a fejléc sorrendjéből – `parse_objstm`
+### 10.10 Objstm: az obj-határok a fejléc sorrendjéből – `parse_objstm` (javítva)
 
 > **Javítva**: commit `3d8fde8`. Teszt: `samples_new/09_objstm_unsorted_header.pdf`.
 
 Az object stream fejlécének `oid offset` párjait a kód offset szerint növekvőnek feltételezte: a k-adik obj vége a k+1-edik pár offsetje volt. A specifikáció (ISO 32000-1, 7.5.7) valóban növekvő sorrendet ír elő, tehát a rendezetlen fejléc szabálysértő, de a tűrő feldolgozás a „megengedő” célnak és a biztonsági vizsgálatnak is megfelel (egy szándékosan rendezetlen fejléccel nem lehet objektumot elrejteni). Fordított sorrendnél a következő pár offsetje kisebb, ezért hamis „invalid offset” hiba lett és az obj kimaradt; nagyobb ugrásnál több obj olvadt egy tokenlistába, és az `analyze_obj` az egyik obj `/JS`-ét vagy `/Type /Page`-ét a másik számához kötötte. Kísérlet: ugyanaz a két oldal-obj a fejléc két sorrendjével 2, ill. 1 oldalt és egy hamis hibát adott.
 
-A javítás: a határ a rákövetkező, offset szerint nagyobb obj kezdete (rendezett offsethalmaz), az utolsóé az adat vége.
+A megvalósított javítás: a határ a rákövetkező, offset szerint nagyobb obj kezdete (rendezett offsethalmaz), az utolsóé az adat vége.
 
-### 10.11 A `%PDF` fejléc az első 1024 byte-on túl – `parse`, `scan_objs`
+### 10.11 A `%PDF` fejléc az első 1024 byte-on túl – `parse`, `scan_objs` (javítva)
 
 > **Javítva**: commit `1a47bea`. Teszt: `samples_new/10_deep_header_text_after_version.pdf`.
 
 A fejlécet a kód az első 1024 byte után is megtalálja (`deep_header`, pl. RTFD csomagba ágyazott PDF), de a fejléc-sor további feldolgozásában három ciklus abszolút `p<1024` korláttal futott: a verzió utáni rész átugrása a sor végéig, a bináris komment átugrása, és a `scan_objs` elején az első `N G obj` keresése. 1024 utáni fejlécnél ezek eleve nem futottak le. Következmény: a `binheader` hamis lett (a TRANSFER-üzenet „binary header comment: NO” részét rontotta), `bad pdf header!` íródott ki, és ha a verzió után szöveg állt a sorban (`%PDF-1.5 www.opoosoft.com`), az objektumként értelmeződött: hamis „INVALID object type” hiba, amit ugyanez a fájl kevesebb szeméttel hiba nélkül átvészelt.
 
-A javítás: a korlátok a fejléchez relatívak (`hdr+1024`, ill. a fejléc végétől 1024), 0 offsetű fejlécnél változatlan érték.
+A megvalósított javítás: a korlátok a fejléchez relatívak (`hdr+1024`, ill. a fejléc végétől 1024), 0 offsetű fejlécnél változatlan érték.
 
-### 10.12 Titkosítás: V4 kulcshossz és a `/StmF` `/StrF` alapértelmezése – `setup_crypt`
+### 10.12 Titkosítás: V4 kulcshossz és a `/StmF` `/StrF` alapértelmezése – `setup_crypt` (javítva)
 
 > **Javítva** a titkosítás (commit `1af305d`) ellenőrzésekor. Teszt: `samples_new/12g_enc_aes128_no_length.pdf` (és a 12a–12f a visszafejtés egészére).
 
-Az ellenőrzés: a beépített RC4 és AES (CBC, 128/192/256 bit, titkosítás és visszafejtés) 900 véletlen vektoron és a FIPS-197 C.1 vektoron egyezik a pycryptodome-mal; a pypdf-fel generált fájlok mind az öt módban (RC4-40, RC4-128, AES-128, AES-256 R5, AES-256 R6) helyesen fejtődnek vissza, a csatolmány byte-ra egyezik a pypdf saját visszafejtésével, a felhasználói jelszavas fájl zárt marad; a sebesség CPythonnal AES-128-nál 1,3 MB/s, RC4-nél 5,2 MB/s. Két hiba került elő: V4 AESV2-nél a felső szintű `/Length` elmaradhat (a crypt filter `/Length 16`-ja adja a hosszt), és a 40 bites alapértelmezéssel a kulcs rossz, a fájl hamisan „jelszó kell” lett; a hiányzó `/StmF` `/StrF` a szabvány szerint `/Identity` (nincs titkosítva), a kód titkosítottnak vette. A javítás: a crypt filter `/Length`-e (byte vagy bit) felülírja a felső szintűt, AESV2-nél mindig 16 byte; `None` → `/Identity`.
+Az ellenőrzés: a beépített RC4 és AES (CBC, 128/192/256 bit, titkosítás és visszafejtés) 900 véletlen vektoron és a FIPS-197 C.1 vektoron egyezik a pycryptodome-mal; a pypdf-fel generált fájlok mind az öt módban (RC4-40, RC4-128, AES-128, AES-256 R5, AES-256 R6) helyesen fejtődnek vissza, a csatolmány byte-ra egyezik a pypdf saját visszafejtésével, a felhasználói jelszavas fájl zárt marad; a sebesség CPythonnal AES-128-nál 1,3 MB/s, RC4-nél 5,2 MB/s. Két hiba került elő: V4 AESV2-nél a felső szintű `/Length` elmaradhat (a crypt filter `/Length 16`-ja adja a hosszt), és a 40 bites alapértelmezéssel a kulcs rossz, a fájl hamisan „jelszó kell” lett; a hiányzó `/StmF` `/StrF` a szabvány szerint `/Identity` (nincs titkosítva), a kód titkosítottnak vette. A megvalósított javítás: a crypt filter `/Length`-e (byte vagy bit) felülírja a felső szintűt, AESV2-nél mindig 16 byte; `None` → `/Identity`.
 
 ## 11. Tesztek (`samples_new/`, `samples/`)
 
