@@ -210,28 +210,21 @@ Külön modul (a két alapfelhasználáshoz – validálás, vírusszűrés – 
 - Fontok: `/ToUnicode` CMap (`bfchar`, `bfrange`, a codespace szerinti kódhossz); egybájtos fontnál WinAnsi / MacRoman / Standard kódolás `/Differences`-szel (a glifnevek → Unicode a Unicode-névből generálva, a magyar `ohungarumlaut` / `odblacute` alakokkal, `uniXXXX` / `uXXXX`); Unicode alapú előre definiált CMap (`/Uni…-UCS2-H`, `UTF16`). A `/ToUnicode` nélküli Identity-H fontnál, ha a kódok Unicode-nak látszanak (van köztük szóköz, szinte mind nyomtatható), a kód maga a karakter; különben az ismeretlen kódú karakterek kimaradnak.
 - Minőségkapu nincs: az ismeretlen karakterek kimaradnak, a kitöltő sorok (`.......`) és a whitespace összevonva; hogy értelmes szöveg-e, azt a felhasználó (a tartalomszűrő tokenizálása) dönti el. A szöveg a content stream sorrendjében jön (többhasábos oldalt nem rendez át).
 - Korlátok: `MAXOPS` (100 000 operátor a hívásra, az oldalak közös kerete, `MINOPSPAGE` l. fent; pypy-vel kb. 1,5 M, CPythonnal kb. 0,2 M operátor/s, így a legrosszabb eset CPythonnal is kb. 0,5 s). A helyi korpuszon egy teleírt szöveges oldal többnyire 1–20 ezer operátor (a 3000 karakternél hosszabb oldalak mediánja 1,3 ezer, p90-e 10 ezer), a cellánként vagy szövegdarabonként külön blokkba tett szöveg (Word-táblázatos adatlap) 50 ezerig; a 100 ezer fölötti oldalak (1,5%) szinte mind műszaki rajzok (AutoCAD, ArchiCAD, Visio), amelyek feliratai a szövegszűréshez nem kellenek, `MAXTEXT` (100 000 karakter), `MAXDEPTH` (8 egymásba ágyazott form). Képként beszkennelt oldal (OCR kellene) és saját kódolású beágyazott font nélkülözhetetlen leképezés nélkül: nincs szöveg.
-- Ellenőrzés (helyi korpusz, 5804 PDF, első oldal): a pdfminer-rel (`extract_text(maxpages=1)`) összevetve a fájlok 73,7%-ánál a pdfminer szavainak legalább 90%-a megvan, 4,4%-ánál csak a szóhatárok térnek el, az átlagos szóegyezés mindkét irányban 0,96. Sebesség (egy szálon, egyszerre egy mérés; 1000 véletlen, 1–3 oldalas, 10 MB alatti fájl, összesen 338 MB, medián 120 KB; mindkettő az összes, legfeljebb 3 oldalt dolgozza fel: pdfminer `extract_text(maxpages=3)`, pdf2str `first_page_text(minwords=10**9, maxpages=3)`, a teljes `parse()`-szal együtt):
+- Ellenőrzés (helyi korpusz, 5804 PDF, első oldal): a pdfminer-rel (`extract_text(maxpages=1)`) összevetve a fájlok 73,7%-ánál a pdfminer szavainak legalább 90%-a megvan, 4,4%-ánál csak a szóhatárok térnek el, az átlagos szóegyezés mindkét irányban 0,96. Sebesség (egy szálon, egyszerre egy mérés, fájlonként egy menet; 1000 véletlen, 1–3 oldalas, 10 MB alatti fájl, összesen 338 MB, medián 120 KB; mindhárom az összes, legfeljebb 3 oldalt dolgozza fel: pdf2str `first_page_text(minwords=10**9, maxpages=3)` a teljes `parse()`-szal és az alapértelmezett 100 000-es `MAXOPS`-szal, pdfminer.six 20251107 `extract_text(maxpages=3)`, pypdf 6.20.1 az első 3 oldal `extract_text()`-je). Méretsávonként átlag / max, ms-ban (zárójelben a fájlok száma):
 
-  | | összesen | medián | 3 leglassabb fájl |
-  |---|---|---|---|
-  | pdf2str, pypy | 15,95 s | 4,1 ms | 0,57 / 0,95 / 1,16 s |
-  | pdfminer, pypy | 85,94 s | 6,5 ms | 9,2 / 10,4 / 15,2 s |
-  | pdf2str, CPython 3.14 | 89,00 s | 14,3 ms | 5,3 / 6,6 / 6,8 s |
-  | pdfminer, CPython 3.14 | 183,79 s | 21,3 ms | 9,2 / 22,1 / 23,0 s |
+  | futás | < 100 KB (459) | 100–300 KB (255) | 300 KB–1 MB (213) | 1–3 MB (60) | 3–10 MB (13) | összesen | hiba |
+  |---|---|---|---|---|---|---|---|
+  | pdf2str, pypy | 5,9 / 78 | 10,0 / 81 | 18,9 / 151 | 26,7 / 130 | 74 / 184 | 11,9 s | 0 |
+  | pdfminer, pypy | 16,1 / 544 | 75,9 / 11 712 | 134 / 7 998 | 476 / 15 539 | 884 / 9 770 | 95,3 s | 0 |
+  | pypdf, pypy | 7,4 / 222 | 11,0 / 108 | 24,2 / 656 | 55,4 / 573 | 220 / 1 469 | 17,6 s | 5 |
+  | pdf2str, CPython 3.9 | 26,8 / 574 | 53,9 / 552 | 121 / 1 199 | 159 / 882 | 427 / 1 995 | 67,0 s | 0 |
+  | pdfminer, CPython 3.9 | 58,9 / 1 169 | 157 / 12 252 | 432 / 13 851 | 1 523 / 32 909 | 4 823 / 39 959 | 313,1 s | 0 |
+  | pypdf, CPython 3.9 | 23,8 / 576 | 41,6 / 414 | 119 / 2 138 | 381 / 4 445 | 1 540 / 11 204 | 89,8 s | 2 |
+  | pdf2str, CPython 3.14 | 19,6 / 421 | 40,5 / 382 | 89,0 / 835 | 119 / 637 | 300 / 972 | 49,3 s | 0 |
+  | pdfminer, CPython 3.14 | 33,8 / 714 | 98,4 / 8 846 | 255 / 9 301 | 924 / 21 961 | 2 733 / 23 496 | 186,0 s | 0 |
+  | pypdf, CPython 3.14 | 17,4 / 466 | 29,9 / 292 | 87,4 / 1 543 | 284 / 3 277 | 1 189 / 8 320 | 66,7 s | 5 |
 
-  Összidőben a pdf2str pypy alatt kb. 5,4-szer, CPython alatt kb. 2,1-szer gyorsabb, mediánban kb. 1,5-szer. A különbség főleg a lassú fájlokból jön: a pdfminer elrendezés-elemzése sok szövegelemű / rajzos oldalon másodpercekig fut. A pdf2str idejéből a `parse()` pypy alatt 2,74 s, CPython alatt 13,76 s, a többi a szövegkinyerés. Nagy (több MB-os) fájloknál a teljes `parse()` dominál (minden streamet kibont), ott csak az első oldalt nézve a pdfminer lehet gyorsabb, mert az csak az ahhoz szükséges objektumokat olvassa be.
-
-  Ugyanez fájlonként (egy menet, pypy) méretsávokra bontva:
-
-  | méret | fájl | pdf2str átlag | pdf2str max | pdfminer átlag | pdfminer max |
-  |---|---|---|---|---|---|
-  | < 100 KB | 459 | 6,2 ms | 0,10 s | 17,5 ms | 0,57 s |
-  | 100–300 KB | 255 | 10,8 ms | 0,07 s | 76,8 ms | 11,6 s |
-  | 300 KB – 1 MB | 213 | 28,6 ms | 0,43 s | 142 ms | 8,2 s |
-  | 1–3 MB | 60 | 63 ms | 0,59 s | 493 ms | 16,0 s |
-  | 3–10 MB | 13 | 238 ms | 1,15 s | 941 ms | 10,4 s |
-
-  A pdf2str ideje a fájlmérettel arányosan nő (a `parse()` minden streamet kibont), egy adott méreten belül kis szórással: a méretkorlát egyben megbízható időkorlát. A pdfminer ideje inkább a tartalomtól (az első oldalak szövegelemeinek számától) függ, mint a mérettől: már 100–300 KB-os fájlon is lehet 10 s fölött.
+  A pdf2str minden értelmezővel és méretsávban a leggyorsabb, és a legrosszabb esete is a legkisebb: a `MAXOPS` keret miatt a szövegkinyerés nem futhat el, a CPythonos 1–2 s-os maximumok nagy része a nagy fájlok teljes `parse()`-a (zlib, titkosítás). Az idő a fájlmérettel arányosan nő, egy méretsávon belül kis szórással: a méretkorlát egyben megbízható időkorlát. A pdfminer ideje inkább a tartalomtól (az oldalak szövegelemeinek számától, az elrendezés-elemzéstől) függ, mint a mérettől: már 100–300 KB-os fájlon is 9–12 s; összidőben pypy alatt kb. 8-szor, CPython alatt kb. 3,8–4,7-szer lassabb. A pypdf kis fájlokon közel van a pdf2str-hez (az is csak a szükséges oldalakat olvassa be), a nagyobbakon 3–4-szer lassabb, és a maximumai is magasabbak. A pypdf hibái: 2 fájl `PdfReadError`, és pypy / CPython 3.14 alatt 3 AES-titkosított fájl `DependencyError` (a `cryptography` csomag hiányzott; a CPython 3.9 alatt volt). A pypy a pdf2str-t 4–5-szörösen gyorsítja, a pdfminert és a pypdf-et kevésbé; a CPython 3.14 kb. 25–40%-kal gyorsabb a 3.9-nél.
 - Szintetikus minták: `samples/text_*.pdf` (a várt szöveg a `samples/test_samples.py` `TEXT` táblájában); a `samples_new/run_tests.py` a `13a–13c` és `14a–14c` mintákon ellenőrzi a `pdf2str`-t, ha a modul importálható.
 
 ## 5. Stream-dekóderek
