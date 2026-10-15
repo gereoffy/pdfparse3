@@ -548,6 +548,7 @@ class PDFStream():
             return "Stream(%d/%d)"%(len(self.data),unc)
 
 re_strspec=re.compile(rb'[()\\]')
+re_eol=re.compile(rb'[\r\n]')
 _strcache=[None]   # (d, pend, [a '(' / ')' poziciok], [melyseg utana], [a melyseg minimuma innen a vegeig])
 
 # a (string) vege: a lezaro ')' utani pozicio, vagy None, ha pend elott nincs lezarva. Csak a ( ) \ bajtokon lep (C-ben
@@ -556,10 +557,13 @@ _strcache=[None]   # (d, pend, [a '(' / ')' poziciok], [melyseg utana], [a melys
 # azonnal latszik, igy a sok le nem zart string sem negyzetes ideju.
 def _string_end(d,p,pend):
     c=_strcache[0]
-    if c is not None and c[0] is d and c[1]==pend:
+    if c is not None and c[0] is d and c[1]==pend and p-1>=c[2][0]:
+        # a '(' a mar bejart tartomanyban van (akar a cache-ben levo, akar a korabbi bejaras altal escape-kent atugrott
+        # '(' -- pl. "\(" parok a szemetben -- , a ket bejaras onnantol ugyanazokat a zarojeleket latja): az uj string
+        # akkor zarul le, ha a melyseg az elotte allo utolso zarojel utani ertek ala csokken
         pos,dep,smin=c[2],c[3],c[4]
-        i=bisect.bisect_left(pos,p-1)
-        if i<len(pos) and pos[i]==p-1 and d[p-1]==0x28 and (i+1>=len(pos) or smin[i+1]>=dep[i]): return None
+        i=bisect.bisect_right(pos,p-1)
+        if i>=len(pos) or smin[i]>=dep[i-1]: return None
     depth=1
     pos=[p-1]
     dep=[1]
@@ -650,7 +654,7 @@ def parse_pdf_param(d,p,pend,err=print_err):
             s0=p
             in_str=1
             e=_string_end(d,p,pend)
-            if e is None and (d.find(b'\r',s0,pend)>=0 or d.find(b'\n',s0,pend)>=0):
+            if e is None and re_eol.search(d,s0,pend):
                 p=pend   # (le nem zart: lent a sorvegnel zarjuk le, a bajtokat nem kell vegigolvasni)
             send=pend if e is None else e
             while p<send:

@@ -166,13 +166,15 @@ def test_unterminated_strings():
     assert u(b'(a\\\\)b')==(5,b'a\\')           # (\\ utan a ) mar zar)
     # binaris szemet sok '(' bajttal (pl. a %%EOF utan): nem lehet negyzetes ideju
     import time
-    d=b'\n'.join(b'\x02\x8a\x00(\xa0'*40 for i in range(1500))
-    t=time.time()
-    p,n=0,0
-    while p<len(d):
-        p,x=P.parse_pdf_param(d,p,len(d),lambda m:None)
-        n+=1
-    assert n>1000 and time.time()-t<2
+    # (a masodik: "\(" parok, amiket a korabbi bejaras escape-kent atugrott, igy nincsenek a cache-ben: a cache-t a
+    # bejart tartomany barmely '('-jara hasznalni kell, kulonben soronkent ujraszkennel)
+    for d in (b'\n'.join(b'\x02\x8a\x00(\xa0'*40 for i in range(1500)),b'\r\n'.join(b'\x02\\(\xa0'*40 for i in range(1500))):
+        t=time.time()
+        p,n=0,0
+        while p<len(d):
+            p,x=P.parse_pdf_param(d,p,len(d),lambda m:None)
+            n+=1
+        assert n>1000 and time.time()-t<2
 
 def test_predictor():
     raw=bytes([2,1,2,3, 2,1,1,1])                # PNG Up
