@@ -95,22 +95,27 @@ def glyph_unicode(name):
     return None
 
 # beagyazott Type1 font (/FontFile) beepitett kodolasa a fontprogram tiszta szoveges reszebol ("dup 252 /udieresis
-# put"), {kod: unicode}, vagy STANDARD ("/Encoding StandardEncoding def"), vagy None (nincs / nem olvashato)
+# put", a kod PostScript radix-jelolessel is lehet: "dup 8#374 /udieresis put"), {kod: unicode}, vagy STANDARD
+# ("/Encoding StandardEncoding def"), vagy None (nincs / nem olvashato)
+def type1_encoding(clear):
+    i=clear.find(b'/Encoding')
+    if i<0: return None
+    if re.match(rb'/Encoding\s+StandardEncoding\b',clear[i:i+40]): return STANDARD
+    m={}
+    for r,v,dec,name in re.findall(rb'dup\s+(?:(\d{1,2})#([0-9A-Za-z]{1,8})|(\d{1,3}))\s*/([^\s/\[\]{}()<>%]+)\s+put',clear[i:]):
+        try: c=int(v,int(r)) if r else int(dec)
+        except ValueError: continue
+        u=glyph_unicode(name.decode('latin-1'))
+        if u is not None and c<256: m[c]=u
+    return m or None
+
 def _type1_builtin(p,desc):
     if type(desc)!=dict or type(desc.get(b'/FontFile'))!=tuple: return None
     s=p.get_obj(desc[b'/FontFile'][1])[1]
     if s is None: return None
     d=bytes(s.decode())
     e=d.find(b'eexec')
-    clear=d[:e] if e>0 else d[:65536]
-    i=clear.find(b'/Encoding')
-    if i<0: return None
-    if re.match(rb'/Encoding\s+StandardEncoding\b',clear[i:i+40]): return STANDARD
-    m={}
-    for c,name in re.findall(rb'dup\s+(\d{1,3})\s*/([^\s/\[\]{}()<>%]+)\s+put',clear[i:]):
-        u=glyph_unicode(name.decode('latin-1'))
-        if u is not None and int(c)<256: m[int(c)]=u
-    return m or None
+    return type1_encoding(d[:e] if e>0 else d[:65536])
 
 # --- egybajtos kodolasok ---------------------------------------------------------------------------------------
 def _codec_table(codec):

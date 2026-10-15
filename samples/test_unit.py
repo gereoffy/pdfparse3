@@ -176,6 +176,14 @@ def test_unterminated_strings():
             n+=1
         assert n>1000 and time.time()-t<2
 
+def test_type1_encoding():
+    import pdf2str
+    e=pdf2str.type1_encoding(b'/Encoding 256 array 0 1 255 {1 index exch /.notdef put} for dup 252 /udieresis put '
+                             b'dup 8#351 /eacute put dup 16#E1 /aacute put dup 2#1000001 /A put readonly def')
+    assert e=={252:'\u00fc',233:'\u00e9',225:'\u00e1',65:'A'}, e
+    assert pdf2str.type1_encoding(b'/Encoding StandardEncoding def') is pdf2str.STANDARD
+    assert pdf2str.type1_encoding(b'/FontName /X def') is None
+
 def test_predictor():
     raw=bytes([2,1,2,3, 2,1,1,1])                # PNG Up
     assert P.unpredict(raw,{b'/Predictor':12,b'/Columns':3})==bytes([1,2,3,2,3,4])
