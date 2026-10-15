@@ -1,17 +1,18 @@
 # pdfparse3.py – működési dokumentáció
 
-*Készült: 2026-09-24, a `pdfparse3.py` eredeti (1610 soros, `d993039`) változatának átnézése alapján; ugyanazon a napon frissítve a 10.1–10.7 hibák javítása után (1679 sor). A sorszámok a javított változatra vonatkoznak, kivéve ahol jelezve van.*
+*Készült: 2026-09-24, a `pdfparse3.py` eredeti (1610 soros, `d993039`) változatának átnézése alapján; azóta a javításokkal és az új modulokkal (titkosítás, objektum-elérés, `pdf2str`, `pdfscan`) együtt karbantartva, utoljára 2026-10-15-én. A kódra függvénynévvel hivatkozik (`grep -n "def név" pdfparse3.py`), sorszámmal csak a 10.1–10.7 pontok, az **eredeti** változatra.*
 
 ## 1. Cél és áttekintés
 
-A `pdfparse3.py` egy **megengedő PDF-elemző**, amelynek két feladata van:
+A `pdfparse3.py` egy **megengedő PDF-elemző**, amelyre három feladat épül:
 
-1. **Tartalom kinyerése** a PDF-ből: beágyazott JavaScript, csatolmányok (`/EmbeddedFile`), Launch action célok, valamint a PDF elé/után fűzött HTML.
-2. **Konzisztencia-ellenőrzés**: a szintaktikai, tömörítési és kereszthivatkozási (xref) hibák felderítése és **súlyozott számlálása**.
+1. **Tartalom kinyerése** a PDF-ből (vírus- és tartalomszűréshez): beágyazott JavaScript, csatolmányok (`/EmbeddedFile`), Launch action célok, URL-ek és `javascript:` URI-k, valamint a PDF elé/után fűzött HTML. A titkosított (üres felhasználói jelszavas) fájlokat visszafejti.
+2. **Konzisztencia-ellenőrzés** (validálás): a szintaktikai, tömörítési és kereszthivatkozási (xref) hibák felderítése, és a **sérülés** (csonka fájl, adatvesztés, sorvége-konverzió, sérült tömörített adat) megkülönböztetése az író programok ártalmatlan szabálytalanságaitól, egy kalibrált pontszámmal (2.4–2.5).
+3. **Szövegkinyerés** (`pdf2str.py`, 4.5): az első oldal(ak) szövege, pl. szöveg alapú spamszűréshez, a parser objektum-elérésére (4.4) építve.
 
-A program nem PDF-megjelenítő: nem értelmezi az oldalak tartalmát, fontokat, képeket. Ami érdekli, az a fájl szerkezete és a benne rejtett aktív tartalom. Az alapelv: *amit csak tud, feldolgoz; a hibákat nem kivételként dobja, hanem megszámolja*. Ezért a hibás, csonka, sérült fájlokon is végigfut, és lehetőleg egyetlen, jól megnevezett hibát ad egy jelenségre (nem százat egy rossz xref-tábla minden sorára).
+A parser nem PDF-megjelenítő: fontokat, képeket nem rajzol, az oldalak tartalmát csak a szövegkinyerés olvassa. Ami érdekli, az a fájl szerkezete és a benne rejtett aktív tartalom. Az alapelv: *amit csak tud, feldolgoz; a hibákat nem kivételként dobja, hanem megszámolja*. Ezért a hibás, csonka, sérült fájlokon is végigfut, és lehetőleg egyetlen, jól megnevezett hibát ad egy jelenségre (nem százat egy rossz xref-tábla minden sorára).
 
-A kód a korábbi `pdfparse2.py` és `testpdf.py` összevonása. A megjegyzések magyar nyelvűek, ékezet nélkül.
+A repó részei: `pdfparse3.py` (a parser, külső függőség nélkül, Python 3.8+ és pypy3), `pdf2str.py` (szövegkinyerés), `pdfscan.py` (tömeges vizsgálat, 12. fejezet), `samples/` (szintetikus minták a generátorukkal és tesztjeikkel) és `samples_new/` (a 10. fejezet javításainak és az új moduloknak a regressziós tesztjei; 11. fejezet). A kód a korábbi `pdfparse2.py` és `testpdf.py` összevonása. A megjegyzések magyar nyelvűek, ékezet nélkül.
 
 ## 2. Használat
 
@@ -33,7 +34,9 @@ content, errcnt, errors = parse_pdf(data, debug=False, validate=False)
 
 Ha a fájl nem PDF (nincs benne `%PDF-` vagy `%FDF-` fejléc): `(None, 99, [(99, "not pdf")])`.
 
-A sorvége-sérülés visszaalakítása (8. fejezet, `eol_repair`) a `parse()` elején, a fejléc megtalálása után történik: ha javítani kellett, az elemző a javított adattal dolgozik tovább (`self.d`), és a hibalista elejére egy 10-es súlyú `TRANSFER` üzenet kerül; az `eol_fixed` attribútum `(irány, darab)` párként őrzi a tényt. Az eredeti byte-sort az elemző nem őrzi meg.
+A sorvége-sérülés visszaalakítása (8. fejezet, `eol_repair`) a `parse()` elején, a fejléc megtalálása után történik: ha javítani kellett, az elemző a javított adattal dolgozik tovább (`self.d`), és a hibalista elejére egy 5-ös súlyú `TRANSFER` üzenet kerül; az `eol_fixed` attribútum `(irány, darab)` párként őrzi a tényt. Az eredeti byte-sort az elemző nem őrzi meg.
+
+A szöveggel együtt: `pdf2str.parse_pdf_text(data)` → `(content, errcnt, errors, text)` (4.5). A feldolgozás után a `PDFParser` példányon az objektumok szerkezetként is elérhetők (`get_obj`, `deref`, 4.4).
 
 ### 2.2 Parancssorból
 
@@ -52,6 +55,8 @@ ERRORS=<errcnt>
 ```
 
 A program a futása közben **sok mindent kiír a stdout-ra** (a `print` hívások), függetlenül a `debug` kapcsolótól. A hibának számító üzenetek ezen felül az `errors` listába is bekerülnek (`PDFParser.err`). Ami csak `print`, az megjegyzés/megfigyelés, nem hiba.
+
+Szövegkinyerés parancssorból: `pdf2str.py fájl.pdf ...` (4.5); sok fájl párhuzamos vizsgálata naplóval: `pdfscan.py` (12. fejezet).
 
 ### 2.3 A kinyert tartalmak nevei
 
@@ -104,7 +109,7 @@ A titkosított fájlok: a helyi korpusz 160 titkosított PDF-jéből 135 csak tu
 
 A hatás: az egyik szerveren a régi összegző pontozással 1046 fájl számított sérültnek, a kalibrált pontozással kb. 380 (a naplóból becsülve); a különbség zöme az író programok hibája volt (minden megjelenítő megnyitotta).
 
-## 3. A feldolgozás menete (`PDFParser.parse`, 813. sor)
+## 3. A feldolgozás menete (`PDFParser.parse`)
 
 ```
 fejléc keresése (%PDF- / %FDF-, első 1024 byte, majd bárhol)
@@ -120,24 +125,31 @@ startxref megkeresése a fájl végéről (rfind)
 verify_xref       – minden xref-bejegyzés tényleg a "N G obj"-ra mutat-e (badxref)
 check_xref_zero   – "0 offsetű n" bejegyzések: létező objektumok-e
 check_truncated   – csonka fájl, ill. régi PDF-maradék a %%EOF után
+setup_crypt       – titkosított fájlnál a kulcs üres felhasználói jelszóval (6.1); ha megvan, a bejárás
+                    minden obj stringjét és streamjét visszafejti (decrypt_obj), különben a fájl "opaque"
 objektumok bejárása
   ├─ validate módban, jó xref-fel: walk_xref (csak az xref által mutatott obj-ek, fájlbeli sorrendben)
   └─ egyébként: scan_objs (lineáris végigolvasás, a rejtett obj-eket is megtalálja)
-       └─ process_obj → parse_stream (dekódolás, objstm bontás) + analyze_obj (JS, URI, Launch, Filespec, oldalak)
+       └─ process_obj → decrypt_obj → parse_stream (dekódolás, objstm bontás) +
+                        analyze_obj (JS, URI, Launch, Filespec, oldalak, katalógus)
 verify_xref_stm   – a bináris xref szerinti objstm-tagság ellenőrzése
 resolve_js        – "/JS 12 0 R" hivatkozások feloldása
 resolve_launch    – Launch /F hivatkozások feloldása
 resolve_urls      – URI action-ök: pdfstream.urls, a javascript: URI-k pdfstream.uri.js
 name_files        – a csatolmányok neve a Filespec /EF hivatkozásai szerint
+TRANSFER (eol)    – ha az eol_repair javított, az üzenet a hibalista elejére (5)
 check_transfer    – sorvége-konverzió (LF↔CRLF) felismerése
 check_gap         – hiányzó/beszúrt byte-ok egy stream belsejében (ha nincs TRANSFER)
+CORRUPT           – sérült tömörített adatú streamek, ha más sérülés-diagnózis nem magyarázza
+check_encoded     – dekódolatlan quoted-printable (ENCODED)
+check_overwritten – csonkolás nélkül felülírt fájl (régi xref a végén)
 ```
 
-A `parse()` két nagy `try` blokkban fut: bármilyen váratlan kivétel `PDFparse-Exception` hibaként (súly 10, teljes traceback az üzenetben) jelenik meg, a program nem áll le.
+A `parse()` két nagy `try` blokkban fut: bármilyen váratlan kivétel `PDFparse-Exception` hibaként (súly 10, teljes traceback az üzenetben) jelenik meg, a program nem áll le. A visszatérés után a példány a `get_obj` / `deref` felülettel az objektumok szerkezetét is adja (4.4); erre épül a `pdf2str` (4.5).
 
 ## 4. Az alsó réteg: lexer és objektum-elemző
 
-### 4.1 Token-olvasó: `parse_pdf_param(d, p, pend, err)` (374. sor)
+### 4.1 Token-olvasó: `parse_pdf_param(d, p, pend, err)`
 
 Egy tokent olvas a `p` pozíciótól; visszaadja az új pozíciót és a tokent. A token típusa a Python-típusából derül ki:
 
@@ -151,9 +163,9 @@ Egy tokent olvas a `p` pozíciótól; visszaadja az új pozíciót és a tokent.
 | `'['` `']'` `'{'` `'}'` `')'` (str) | határolók |
 | `None` | vége az adatnak |
 
-Jellemző engedékenységek: `endobj` után nem kell whitespace; a lezáratlan `(` string a sor végén záródik (Oracle PDF driver hibája); a `\ddd` oktális escape 1–3 jegyű; a `\r` és `\r\n` a stringen belül `\n`-re alakul; a hex-stringben a whitespace a két nibble között is megengedett, a páratlan utolsó nibble 0-val egészül ki; a kommentek eldobódnak, kivéve a `%%EOF`-ot, ami tokenként visszajön.
+Jellemző engedékenységek: `endobj` után nem kell whitespace; a lezáratlan `(` string a sor végén záródik (Oracle PDF driver hibája; a string végét a `_string_end` regex-szel, csak a `(` `)` `\` byte-okon lépve keresi, és a lezáratlan string zárójel-mélységeit megjegyzi, így a sok `(`-t tartalmazó bináris szemét sem négyzetes idejű); a `\ddd` oktális escape 1–3 jegyű; a `\r` és `\r\n` a stringen belül `\n`-re alakul; a hex-stringben a whitespace a két nibble között is megengedett, a páratlan utolsó nibble 0-val egészül ki; a kommentek eldobódnak, kivéve a `%%EOF`-ot, ami tokenként visszajön.
 
-### 4.2 Objektum-olvasó: `parse_pdf_obj(d, p, pend, stop, err, lenref)` (599. sor)
+### 4.2 Objektum-olvasó: `parse_pdf_obj(d, p, pend, stop, err, lenref)`
 
 Tokeneket gyűjt egy listába (`objs`), amíg a `stop` (tipikusan `endobj`), `%%EOF` vagy a `startxref <szám>` páros el nem jön. Visszatérés: `(pozíció, objs, stream)`.
 
@@ -171,10 +183,10 @@ Fontos részletek:
 
 ### 4.3 Segédfüggvények a token-listán
 
-- `objs_value(objs, name)` (521): az első `name` kulcs utáni érték listaként (tömb esetén annak elemei). Nem ismeri a beágyazás mélységét: az első előfordulást veszi.
-- `objs_dict(objs, i)` (540): az `objs[i]`-nél kezdődő `<< >>` **legfelső szintjének** kulcs–érték párjai. Beágyazott dict/tömb értéke `None`, a hivatkozás `('R', oid)`.
-- `top_dict(objs)` (743): az obj törzsének dict-je, ha az `N G obj <<` alakú.
-- `objs_decodeparms(objs)` (570): a `/DecodeParms` (vagy `/DP`) dict; tömb esetén a predictort tartalmazót, különben az elsőt.
+- `objs_value(objs, name)`: az első `name` kulcs utáni érték listaként (tömb esetén annak elemei). Nem ismeri a beágyazás mélységét: az első előfordulást veszi.
+- `objs_dict(objs, i)`: az `objs[i]`-nél kezdődő `<< >>` **legfelső szintjének** kulcs–érték párjai. Beágyazott dict/tömb értéke `None`, a hivatkozás `('R', oid)`.
+- `top_dict(objs)`: az obj törzsének dict-je, ha az `N G obj <<` alakú.
+- `objs_decodeparms(objs)`: a `/DecodeParms` (vagy `/DP`) dict; tömb esetén a predictort tartalmazót, különben az elsőt.
 
 ### 4.4 Objektum-elérés a feldolgozás után és a content stream (a szövegkinyerő modulhoz)
 
@@ -224,16 +236,16 @@ Külön modul (a két alapfelhasználáshoz – validálás, vírusszűrés – 
 
 ## 5. Stream-dekóderek
 
-A `PDFStream.decode(predictor=False)` (332. sor) a `/Filter` lista sorrendjében alkalmazza a szűrőket. Nem dob kivételt: az **első** hiba a `stream.error`-ba, a megjegyzések a `stream.note`-ba kerülnek, és a részlegesen dekódolt adatot adja vissza. A képformátumoknál (`/DCTDecode`, `/JPXDecode`, `/JBIG2Decode`, `/CCITTFaxDecode`) megáll, a `/Crypt`-et átugorja, ismeretlen szűrőt kiír. Az inline-image rövidítéseket (`/Fl`, `/AHx`, `/A85`, `/LZW`, `/RL`) is elfogadja.
+A `PDFStream.decode(predictor=False)` a `/Filter` lista sorrendjében alkalmazza a szűrőket. Nem dob kivételt: az **első** hiba a `stream.error`-ba, a megjegyzések a `stream.note`-ba kerülnek, és a részlegesen dekódolt adatot adja vissza. A képformátumoknál (`/DCTDecode`, `/JPXDecode`, `/JBIG2Decode`, `/CCITTFaxDecode`) megáll, a `/Crypt`-et átugorja, ismeretlen szűrőt kiír. Az inline-image rövidítéseket (`/Fl`, `/AHx`, `/A85`, `/LZW`, `/RL`) is elfogadja.
 
 | Szűrő | Függvény | Viselkedés |
 |---|---|---|
-| `/FlateDecode` | `inflate` (226) | Lásd alább. |
-| `/LZWDecode` | `LZWDecode` (40) | pypdf-ből átvett; a `/DecodeParms /EarlyChange` (0/1) paramétert kezeli. Érvénytelen kód hiba (a részeredményt adja vissza). A hiányzó EOD (záró) kód **megjegyzés**, ha a stream vége a `/Length` alapján biztos (`PDFStream.exact`: a `/Length` után ott az `endstream`), mert akkor az író pont ennyit írt ki (mint a Flate-nél a hiányzó adler32); ha az `endstream` keresése döntött, **hiba**, mert csonkolásra is utalhat. Az EOD utáni maradékot is megjegyzi. |
-| `/ASCII85Decode` | `ASCII85Decode` (154) | Megengedő: 32 bites túlcsordulás levágva, `y` (btoa) elfogadva, érvénytelen karakterek átugorva; mindez megjegyzés, nem hiba. |
-| `/ASCIIHexDecode` | `ASCIIHexDecode` (125) | Érvénytelen karakter és hiányzó `>` hiba, de dekódol tovább. |
-| `/RunLengthDecode` | `RunLengthDecode` (186) | Egyszerű, hibát nem jelez. |
-| predictor | `unpredict` (267) | PNG (10–15) és TIFF (2, csak 8 bit) predictor visszaalakítása. Csak `predictor=True` esetén fut: xref stream, objstm, csatolmány. |
+| `/FlateDecode` | `inflate` | Lásd alább. |
+| `/LZWDecode` | `LZWDecode` | pypdf-ből átvett; a `/DecodeParms /EarlyChange` (0/1) paramétert kezeli. Érvénytelen kód hiba (a részeredményt adja vissza). A hiányzó EOD (záró) kód **megjegyzés**, ha a stream vége a `/Length` alapján biztos (`PDFStream.exact`: a `/Length` után ott az `endstream`), mert akkor az író pont ennyit írt ki (mint a Flate-nél a hiányzó adler32); ha az `endstream` keresése döntött, **hiba**, mert csonkolásra is utalhat. Az EOD utáni maradékot is megjegyzi. |
+| `/ASCII85Decode` | `ASCII85Decode` | Megengedő: 32 bites túlcsordulás levágva, `y` (btoa) elfogadva, érvénytelen karakterek átugorva; mindez megjegyzés, nem hiba. |
+| `/ASCIIHexDecode` | `ASCIIHexDecode` | Érvénytelen karakter és hiányzó `>` hiba, de dekódol tovább. |
+| `/RunLengthDecode` | `RunLengthDecode` | Egyszerű, hibát nem jelez. |
+| predictor | `unpredict` | PNG (10–15) és TIFF (2, csak 8 bit) predictor visszaalakítása. Csak `predictor=True` esetén fut: xref stream, objstm, csatolmány. |
 
 ### 5.1 A Flate-kibontás logikája (`inflate`)
 
@@ -251,43 +263,43 @@ A cél: úgy viselkedni, mint a PDF-olvasók, de a **valódi adatsérülést** h
 
 ## 6. Az xref kezelése
 
-### 6.1 Szekciók (`parse_xref`, 1051)
+### 6.1 Szekciók (`parse_xref`)
 
 A `startxref` offsetjétől indulva egy `todo` listán követi a `/Prev` és `/XRefStm` láncot (a már látott offseteket kihagyja, így a hurkok nem végtelenek). Két formátum:
 
-- **ASCII tábla** (`parse_xref_table`, 1110): `xref` + alszekció-fejlécek + `offset gen n|f` sorok + `trailer <<...>>`. Az `n` bejegyzések `xref[oid] = (offset+base, gen)`; a `setdefault` miatt a legfrissebb szekció győz. A `0 offsetű n` bejegyzések külön halmazba (`xref_zero`) kerülnek. Javítja azt a gyakori hibát, amikor az első szabad bejegyzés 1-es sorszámmal indul 0 helyett.
-- **Xref stream** (`parse_xref_stream`, 1136): `/W [a b c]`, `/Index`, `/Size` alapján olvassa a bináris sorokat. 1-es típus → `xref`, 2-es típus → `xref_stm[oid] = (objstm oid, index)`, 1-es típus 0 offsettel → `xref_zero`. A dekódolási hiba itt súlyos (10).
+- **ASCII tábla** (`parse_xref_table`): `xref` + alszekció-fejlécek + `offset gen n|f` sorok + `trailer <<...>>`. Az `n` bejegyzések `xref[oid] = (offset+base, gen)`; a `setdefault` miatt a legfrissebb szekció győz. A `0 offsetű n` bejegyzések külön halmazba (`xref_zero`) kerülnek. Javítja azt a gyakori hibát, amikor az első szabad bejegyzés 1-es sorszámmal indul 0 helyett.
+- **Xref stream** (`parse_xref_stream`): `/W [a b c]`, `/Index`, `/Size` alapján olvassa a bináris sorokat. 1-es típus → `xref`, 2-es típus → `xref_stm[oid] = (objstm oid, index)`, 1-es típus 0 offsettel → `xref_zero`. A dekódolási hiba itt 2-es súlyú figyelmeztetés, és ha zlib-adathiba, a `CORRUPT` számlálójába is beszámít.
 
 A trailerből a `/Encrypt` objektum számát és az `/ID` első elemét is kiolvassa (`self.encrypt`, `self.fileid`). A bejárás előtt a `setup_crypt` kiszámolja a Standard security handler kulcsát **üres felhasználói jelszóval**, és ellenőrzi (ISO 32000-2 7.6.4.3): RC4 40–128 bit (R2–R4), AES-128 (V4, AESV2), AES-256 (V5, R5/R6 AESV3, a 2.B hash-sel). A titkosított PDF-ek többsége csak tulajdonosi jelszóval (jogosultság-korlátozással) titkosított, ezeket bármelyik néző jelszó nélkül megnyitja. Ha a kulcs jó (`self.crypt`), a `decrypt_obj` minden (nem objstm-beli) obj stringjeit és streamjét a feldolgozás előtt visszafejti (objektumonkénti kulccsal), és a fájl ugyanúgy elemződik, mint egy titkosítatlan (JS, URI, csatolmány a nevével, objstm, sérülés-ellenőrzés). Nem fejti vissza a szabvány szerint titkosítatlan részeket: az xref streamet, a titkosítási szótárt, az aláírás `/Contents`-ét, és `/EncryptMetadata false` mellett a metaadat streamet. Kiírás: `CRYPT: V4 R4 AES 128 bit, empty user password: decrypting`. V4-nél a kulcshossz a crypt filter `/Length`-e (byte-ban, egyes íróknál bitben), AESV2-nél mindig 16 byte, mert a felső szintű `/Length` elmaradhat, és annak 40 bites alapértelmezése hamis „jelszó kell” eredményt adna; a hiányzó `/StmF` `/StrF` a szabvány szerint `/Identity`, azaz nincs titkosítva. Ha felhasználói jelszó kell (vagy közvetlen `/Encrypt` szótár, hiányzó `/ID`, ismeretlen handler), a fájl titkosított marad (`opaque()`): a streamek dekódolását és az objstm-ek bontását kihagyja, a csatolmányt nyersen adja ki. Az RC4 és az AES (táblázatos, FIPS-197) külső függőség nélkül, a modulban van; az AES pypy-vel kb. 25 MB/s, CPythonnal kb. 1 MB/s. Egyik eset sem hiba.
 
-Ha a `startxref` rossz helyre mutat, visszafelé keresi az utolsó `xref` kulcsszót (`rfind_xref`, 1038. sor; a `startxref` belsejében levő találat nem számít), két helyen: `parse()` 918. sor, `parse_xref` 1084. sor.
+Ha a `startxref` rossz helyre mutat, visszafelé keresi az utolsó `xref` kulcsszót (`rfind_xref`; a `startxref` belsejében levő találat nem számít), két helyen: a `parse()`-ban az érvénytelen offsetnél, és a `parse_xref`-ben, ha az első szekció nem xref.
 
-### 6.2 Ellenőrzés (`verify_xref`, 1172 és `report_badxref`, 1194)
+### 6.2 Ellenőrzés (`verify_xref` és `report_badxref`)
 
 Minden bejegyzésre megnézi, hogy az offseten (max. 4 whitespace-t megengedve) tényleg `N G obj` áll-e a **megegyező** obj-számmal és generációval. A rossz bejegyzések a `badxref` halmazba kerülnek, és **összesítve** kapnak hibát, jelleg szerint: minden bejegyzés egy offsetre mutat (hamis tábla), más objektumokra mutat (elszámozott tábla), az objektum elé mutat (max. K byte-tal), egyéb.
 
-`check_xref_zero` (1341): a 0 offsetű `n` bejegyzés nem hiba, ha az obj nem is létezik (macOS Quartz így jelöli a használaton kívüli számokat), de hiba, ha az obj létezik a fájlban.
+`check_xref_zero`: a 0 offsetű `n` bejegyzés nem hiba, ha az obj nem is létezik (macOS Quartz így jelöli a használaton kívüli számokat), de hiba, ha az obj létezik a fájlban.
 
-`verify_xref_stm` (1223): a 2-es típusú bejegyzések objstm-jei léteznek-e, és tényleg benne van-e az obj.
+`verify_xref_stm`: a 2-es típusú bejegyzések objstm-jei léteznek-e, és tényleg benne van-e az obj.
 
 ### 6.3 Bejárás: `walk_xref` vs. `scan_objs`
 
-- `walk_xref` (962): csak validate módban, ha az xref legfeljebb felerészben rossz és a fájl nem csonka. A rossz offsetű obj-eket az `obj_starts()` gyorsítótárból keresi meg (az utolsó előfordulást); a térképet csak akkor építi fel, ha van rossz bejegyzés. Az `endobj` nélküli obj-eket egy összesített hibával jelzi.
-- `scan_objs` (982): lineáris végigolvasás a fejléctől. Az első obj előtti szemetet átugorja (első 1 KB-on belül), az obj-ok közti szemétnél az `N G obj`-ra szinkronizál (hiba). A `%%EOF` utáni régi PDF-maradékban (`leftover`) a hibákat nem számolja (`quiet`), de a tartalmat kinyeri.
+- `walk_xref`: csak validate módban, ha az xref legfeljebb felerészben rossz és a fájl nem csonka. A rossz offsetű obj-eket az `obj_starts()` gyorsítótárból keresi meg (az utolsó előfordulást); a térképet csak akkor építi fel, ha van rossz bejegyzés. Az `endobj` nélküli obj-eket egy összesített hibával jelzi.
+- `scan_objs`: lineáris végigolvasás a fejléctől. Az első obj előtti szemetet átugorja (első 1 KB-on belül), az obj-ok közti szemétnél az `N G obj`-ra szinkronizál (hiba). A `%%EOF` utáni régi PDF-maradékban (`leftover`) a hibákat nem számolja (`quiet`), de a tartalmat kinyeri.
 
-`process_obj` (1015) tölti a `dom[oid] = (kezdet, vég)` térképet (a későbbi előfordulás felülírja, mint az incremental update-nél), majd `parse_stream` és `analyze_obj`.
+`process_obj` tölti a `dom[oid] = (kezdet, vég)` térképet (a későbbi előfordulás felülírja, mint az incremental update-nél), titkosított fájlnál visszafejti az obj-t (`decrypt_obj`), majd `parse_stream` és `analyze_obj`.
 
 ## 7. Tartalom-elemzés
 
-### 7.1 `parse_stream` (1233)
+### 7.1 `parse_stream`
 
 Minden streamet kibont (a tömörítési hibák miatt), kivéve a vissza nem fejthető titkosított fájlokat és az xref streameket (azokat a `parse_xref` már ellenőrizte). A dekódolási hiba `STREAM: decoding error in obj #N` hiba, a megjegyzés csak kiírás. `/EmbeddedFile` → `content` (először `pdfstream.dat` néven; a stream obj-száma a `filestreams` térképbe kerül, a végleges nevet a `name_files` adja a feldolgozás végén); `/ObjStm` → `parse_objstm`. Előtte `check_stream_length` a sorvége-statisztikához.
 
-### 7.2 Objektum-streamek (`parse_objstm`, 1465)
+### 7.2 Objektum-streamek (`parse_objstm`)
 
-A `/First` byte-os fejlécből (`oid offset` párok) kiolvassa a belső obj-eket, és mindegyiket `analyze_obj`-nak adja (a következő obj offsetje a vége). Hibás fejléc esetén az egészet egyben elemzi. A belső obj-ek a `strobjs` és `fsobjs` térképekbe kerülhetnek, a `dom`-ba nem.
+A `/First` byte-os fejlécből (`oid offset` párok) kiolvassa a belső obj-eket, és mindegyiket `analyze_obj`-nak adja (egy obj vége a rákövetkező, offset szerint nagyobb obj kezdete, nem a fejléc sorrendje: 10.10). Hibás fejléc esetén az egészet egyben elemzi. A belső obj-ek a `strobjs` és `fsobjs` térképekbe kerülhetnek, a `dom`-ba nem.
 
-### 7.3 `analyze_obj` (1499)
+### 7.3 `analyze_obj`
 
 Egy obj token-listáján:
 
@@ -296,7 +308,7 @@ Egy obj token-listáján:
 - **Filespec** (`/Type /Filespec` vagy `/UF`): a neveit `fsobjs`-be teszi, és az `/EF << /F 3 0 R /UF 3 0 R >>` által hivatkozott stream obj-számaihoz rendeli a fájlnevet (`efnames`; a későbbi Filespec győz). Ha az `/EF` maga is hivatkozás (`/EF 39 0 R`, külön objektumban álló `<< /F 47 0 R >>` dict), a nevet `efrefs`-be teszi, az ilyen, csak `/F` `/UF` `/DOS` `/Mac` `/Unix` kulcsú dict-eket pedig `efdicts`-be. A feldolgozás végén a `name_files` először az `efrefs`→`efdicts` láncot oldja fel, majd ezzel nevezi el a `/EmbeddedFile` tartalmakat; a Filespec nélküli stream `pdfstream.dat` marad;
 - **`/JS`**: minden előfordulás; string → azonnal `pdfstream.js`, hivatkozás → `jsrefs`, a végén `resolve_js` oldja fel (string-obj vagy stream);
 - **`/S /Launch`**: az egész action dict-et bejárja, a `/F`, `/Win`, `/Unix`, `/Mac`, `/P`, `/D`, `/O` értékeket összefűzi; a hivatkozott `/F`-et a végén `resolve_launch` oldja fel (Filespec nevei, string-obj, vagy az obj összes stringje);
-- **oldalak**: `/Type /Page` számlálás, `/Type /Pages /Count` maximuma.
+- **oldalak**: `/Type /Page` számlálás, `/Type /Pages /Count` maximuma; `/Type /Catalog` → `catalog` (a 4.4 szerinti eléréshez, ha a trailer `/Root`-ja nem használható).
 
 A HTML-t (`add_html`) egészében és a `<script>` blokkjait külön JS-ként is kiadja.
 
@@ -306,14 +318,14 @@ Ezek egy-egy jól ismert, egyetlen okra visszavezethető sérülésmintát ismer
 
 | Üzenet | Függvény | Mit ismer fel |
 |---|---|---|
-| `TRUNCATED: ...` | `check_truncated` (1430) | Félbeszakadt letöltés/másolás: nullákkal kitöltött vége, vagy PDF-szerkezet az utolsó `%%EOF` után (pl. linearizált fájlból csak az első oldal szekciója teljes). Ha viszont az EOF előtti dokumentum teljes (jó xref) és az EOF utáni maradék nem obj-határon kezdődik, az régi/másik fájl maradéka: `JUNK ... leftover` (súly 1). A `startxref N`-nel végződő, csak `%%EOF`-hiányos fájl nem csonka. Ha az utolsó `endobj` után már csak a csonka xref-tábla áll, az üzenet jelzi, hogy minden obj megvan, a tartalom helyreállítható. |
+| `TRUNCATED: ...` | `check_truncated` | Félbeszakadt letöltés/másolás: nullákkal kitöltött vége, vagy PDF-szerkezet az utolsó `%%EOF` után (pl. linearizált fájlból csak az első oldal szekciója teljes). Ha viszont az EOF előtti dokumentum teljes (jó xref) és az EOF utáni maradék nem obj-határon kezdődik, az régi/másik fájl maradéka: `JUNK ... leftover` (súly 1). A `startxref N`-nel végződő, csak `%%EOF`-hiányos fájl nem csonka. Ha az utolsó `endobj` után már csak a csonka xref-tábla áll, az üzenet jelzi, hogy minden obj megvan, a tartalom helyreállítható. |
 | `CORRUPT: N streams with corrupt compressed data` | `parse_stream`, `parse()` | Sérült tömörített adat: zlib-hiba a stream közepén vagy adler32-eltérés (nem az író checksum-hibája). Csak akkor, ha más sérülés-diagnózis nem magyarázza. |
 | `ENCODED: quoted-printable encoded file` | `check_encoded` | Dekódolatlan e-mail csatolmány: a sorok nagy része `=` soft line breakkel végződik, és sok `=XX` escape van. |
 | `JUNK: ... older / other version's data after the %%EOF ... (overwritten without truncation)` | `check_overwritten` | Egy teljes PDF után egy régebbi/hosszabb változat vége áll a saját xref-jével és `%%EOF`-jával: a fájlt csonkolás nélkül írták felül. A fájl végéről olvasó megjelenítők a rossz xref-et találják. Sérülés (10). |
-| `TRANSFER: LF -> CRLF / CRLF -> LF ...` | `check_transfer` (1388), `check_xref_shift` (a sorvégeket a `counts_upto` egy menetben számolja), `check_stream_length`, `find_last_xref` | Szöveges módú átvitel (base64 nélküli e-mail, ASCII FTP): a streamek hossza pont a bennük levő sorvégek számával tér el a `/Length`-től, a `startxref` és az xref-bejegyzések monoton növekvő mértékben csúsznak. Több egybehangzó jel kell, az ellentmondó jelek elnyomják. Súlya 10, kivéve ha a tartalom nem sérült: csak szöveges fájl (a sorvégek csak whitespace-t érintenek), vagy minden stream hossza stimmel és mind hibátlanul kibontható → 5. |
+| `TRANSFER: LF -> CRLF / CRLF -> LF ...` | `check_transfer`, `check_xref_shift` (a sorvégeket a `counts_upto` egy menetben számolja), `check_stream_length`, `find_last_xref` | Szöveges módú átvitel (base64 nélküli e-mail, ASCII FTP): a streamek hossza pont a bennük levő sorvégek számával tér el a `/Length`-től, a `startxref` és az xref-bejegyzések monoton növekvő mértékben csúsznak. Több egybehangzó jel kell, az ellentmondó jelek elnyomják. Súlya 10, kivéve ha a tartalom nem sérült: csak szöveges fájl (a sorvégek csak whitespace-t érintenek), vagy minden stream hossza stimmel és mind hibátlanul kibontható → 5. |
 | `TRANSFER: ... text only file, N line endings reverted (parsed the repaired data)` | `eol_repair` (a `parse()` elején, a fejléc után) | **Visszaalakítás**, ha egyértelmű: a `startxref` nem xref-szekcióra mutat (sem a fejléchez relatívan, sem abszolút), a `%PDF` fejléctől az utolsó `startxref` soráig (és a közvetlenül utána álló `%%EOF`-ig, ha van) tartó részben nincs bináris byte (32 alatt csak TAB, LF, CR), és a sorvégek egyneműek (csak LF → LF→CRLF-fel próbál, azaz CRLF→LF sérülés; mind CRLF → CRLF→LF-fel, azaz LF→CRLF sérülés). A fejléc előtti szemetet és a `%%EOF` utáni farkat (nulla-padding, HTML, más fájl maradéka) nem vizsgálja és nem is bántja, így egy CRLF-es levelezőfejléc vagy egy bináris farok nem zavar. Csak akkor fogadja el, ha a visszaalakított adatban a `startxref` xref-szekcióra mutat; ilyenkor az elemzés a javított adattal folytatódik, a hamis xref- és stream-hibák nem is keletkeznek, csak ez az (5-ös súlyú) üzenet marad. Kevert sorvégeknél vagy bináris adatnál nem kísérletezik, mert a 0D 0A eredetileg is lehetett az adatban; ott a `check_transfer` jelez. |
-| `GAP: N bytes missing/inserted inside the stream at offset ...` | `check_gap` (1260) | Minden rossz xref-bejegyzés **ugyanannyival** csúszik, és egy korábbi stream hossza pont ennyivel tér el: sérült másolás egy stream belsejében. |
-| `JUNK: N bytes before the %PDF header (...)` | `junk_kind` (724) | UTF-8 BOM, RTFD, ZIP, OLE2, RTF, MacBinary, HTML, MIME-fejlécek, szöveg vagy bináris a fejléc előtt. Ha az offsetek a fejléchez relatívak, `base` beállítása; súlya 5, ha a fejléc az első 1024 byte-on belül van, különben 10. *Érdekesség:* egy macOS-es Acrobat Reader a fejléc előtti HTML-ben bárhol álló `<!`-re (`<!--`, `<!DOCTYPE`) 1024 byte-on belül is elutasította a fájlt (a `<!` nélkül megnyitotta; a `%%EOF` után vagy a PDF belsejében nem zavarta). Minden más megjelenítő és parser kezeli, ezért nem sérülés; más Acrobat-verziókkal és operációs rendszereken még ellenőrizni kell. |
+| `GAP: N bytes missing/inserted inside the stream at offset ...` | `check_gap` | Minden rossz xref-bejegyzés **ugyanannyival** csúszik, és egy korábbi stream hossza pont ennyivel tér el: sérült másolás egy stream belsejében. |
+| `JUNK: N bytes before the %PDF header (...)` | `junk_kind` | UTF-8 BOM, TNEF (Outlook `winmail.dat`; a PDF hosszát az attribútum-fejlécből veszi, a konténer többi része nem számít szemétnek), RTFD, ZIP, OLE2, RTF, MacBinary, HTML, MIME-fejlécek, szöveg vagy bináris a fejléc előtt. Ha az offsetek a fejléchez relatívak, `base` beállítása; súlya 5, ha a fejléc az első 1024 byte-on belül van, különben 10. *Érdekesség:* egy macOS-es Acrobat Reader a fejléc előtti HTML-ben bárhol álló `<!`-re (`<!--`, `<!DOCTYPE`) 1024 byte-on belül is elutasította a fájlt (a `<!` nélkül megnyitotta; a `%%EOF` után vagy a PDF belsejében nem zavarta). Minden más megjelenítő és parser kezeli, ezért nem sérülés; más Acrobat-verziókkal és operációs rendszereken még ellenőrizni kell. |
 | `JUNK: N bytes after %%EOF (HTML)` | `parse` | HTML a PDF után (poliglott fájl); tartalomként is kiadja. |
 
 ### 8.1 A sorvége-sérülés (`TRANSFER`) eredete
@@ -340,13 +352,14 @@ A fordított irány (`LF -> CRLF`) szöveges módú átvitel nyoma (ASCII módú
 - Titkosított PDF-et csak üres felhasználói jelszóval fejt vissza (a felhasználói jelszavast nem); a `/Encrypt` csak a trailerből derül ki, a `scan_objs` közben talált `trailer`-ből nem; közvetlen (nem hivatkozott) `/Encrypt` szótárt és a `/Crypt` szűrős streameket nem fejt vissza.
 - A csonkolt LZW stream csak a hosszából ismerhető fel: az LZW-ben nincs záró blokk vagy ellenőrzőösszeg, ezért a hiányzó EOD kód megjegyzés, ha a `/Length` biztosan megadja a stream végét, és hiba, ha nem (10.9). Egy `/Length`-hez igazított, de csonka LZW adat (pl. `samples/lzw_trunc.pdf`) így nem hiba. A Flate-nél a hiányzó záró blokk mindig hiba.
 - A TIFF-predictor csak 8 bit/komponensre működik; a `/DecodeParms` hivatkozott (`R`) értékei `TypeError`-t, azaz hamis `Predictor:` hibát adnak.
-- Inline image (`BI ... ID ... EI`) csak tartalom-streamen belül létezik, amit a program nem elemez; a 637. sor ága gyakorlatilag csak szemétnél fut, és a teljes `objs` listát kiírja.
+- Inline image (`BI ... ID ... EI`) csak tartalom-streamen belül létezik, amit a parser objektumszinten nem elemez; a `parse_pdf_obj` `BI`/`ID`/`EI` ága gyakorlatilag csak szemétnél fut (a kiírás 256 byte-ra vágva). A content streamet a `content_ops` dolgozza fel (4.4), az inline képet egyben.
 - Validate módban (`walk_xref`) a rejtett, xref-ben nem szereplő obj-ok nem kerülnek elő (szándékos: a szerkesztett PDF-ben ugyanaz az obj többször is szerepel, csak az utolsó érvényes).
 - Minden streamet kibont (képeket is), ami nagy fájloknál lassú, de ez a tömörítési hibák felderítéséhez kell.
+- A `pdf2str` korlátai a 4.5 pontban: nincs OCR, a saját kódolású beágyazott font és a `/ToUnicode` nélküli (nem Unicode-kódú) CID font karakterei kimaradnak, a többhasábos oldalt nem rendezi át.
 
 ## 10. Talált hibák és állapotuk
 
-Prioritás szerint. Minden pont az adott bemenettel **reprodukálva** lett. A **10.1–10.7 és 10.9–10.11 javítva** (2026-09-24, egy-egy külön commit), regressziós tesztjeik a `samples_new/` könyvtárban vannak (11. fejezet). A 10.8 megmaradt apróságai még nyitottak. A 10.1–10.7 pontokban a sorszámok az **eredeti** (`d993039`) változatra vonatkoznak.
+Prioritás szerint. Minden pont az adott bemenettel **reprodukálva** lett, és mind **javítva** (egy-egy külön commit), regressziós tesztjeik a `samples_new/` könyvtárban vannak (11. fejezet). A 10.1–10.7 pontokban a sorszámok az **eredeti** (`d993039`) változatra vonatkoznak; a többi pont függvénynévvel hivatkozik.
 
 ### 10.1 A buffer legvégén álló szám/kulcsszó utolsó karaktere elveszik – `parse_pdf_param`, 501–510. sor
 
@@ -466,7 +479,7 @@ Az ellenőrzés: a beépített RC4 és AES (CBC, 128/192/256 bit, titkosítás �
 
 A `samples/` könyvtárban a szintetikus minták (`samples/*.pdf`), a generátoruk (`gen_samples.py`) és a tesztjeik: `test_samples.py` (a minták elvárt eredményei, a `pdf2str` szövege is) és `test_unit.py` (lexer, dekóderek, AES / RC4 tesztvektorok, objektum-elérés, `pdf2str` robusztusság). Leírás és futtatás: `samples/README.md`. A minták bájtra reprodukálhatók (`python3 samples/gen_samples.py` után a `git status` nem mutat változást).
 
-A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tartalmazza: kis, kézzel összeállított PDF-eket, mindegyik egy-egy hibát céloz.
+A `samples_new/` könyvtár a 10. fejezet javításainak, a titkosításnak, az objektum-elérésnek és a `pdf2str` robusztusságának regressziós tesztjeit tartalmazza: kis, kézzel összeállított PDF-eket, mindegyik egy-egy hibát vagy esetet céloz.
 
 | Fájl | Mit tesztel |
 |---|---|
@@ -478,6 +491,7 @@ A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tar
 | `05_bad_startxref_xrefstream_prev_section.pdf` | ASCII xref-es első szekció + xref stream-es incremental update rossz `startxref`-fel (10.5): nincs hamis `invalid subsection header` |
 | `06_junk_before_header.pdf` | 8 byte szemét a `%PDF` előtt (10.6): `base=8`, a `startxref` a korrigált érték |
 | `07_validate_bad_xref_offsets.pdf` | validate mód, 2/4 xref-bejegyzés eltolva, a JS az egyik rossz offsetű obj-ban (10.7): a `walk_xref` mindet megtalálja |
+| `08_lzw_earlychange0_no_eod.pdf` (+ `08_payload.bin`) | három LZW csatolmány (10.9): `/EarlyChange 0` záró kód nélkül és alap EarlyChange záró kóddal (byte-ra egyeznek a payloaddal, a hiányzó EOD megjegyzés), valamint záró kód nélkül feloldhatatlan `/Length 99 0 R`-rel: ez az egyetlen hiba |
 | `09_objstm_unsorted_header.pdf` | object stream fordított sorrendű fejléccel (10.10): mindkét belső obj megvan, 3 oldal, 0 hiba |
 | `10_deep_header_text_after_version.pdf` | 2000 byte szemét a `%PDF` előtt és szöveg a verzió után a fejléc-sorban (10.11): `base=2000`, `binheader` igaz, csak a JUNK hiba |
 | `../samples/lf_text_ok.pdf`, `../samples/lf_text_crlf.pdf` | (a `samples/`-ben, a másik repóval szinkronban) csak-LF szöveges PDF és LF→CRLF-sérült változata: az `eol_repair` visszaalakítja, csak a TRANSFER marad (8. fejezet) |
@@ -488,18 +502,17 @@ A `samples_new/` könyvtár a 10.1–10.7 javítások regressziós tesztjeit tar
 | `12a`–`12e_enc_*.pdf` | pypdf-fel generált titkosított PDF-ek (üres felhasználói jelszó, `owner` tulajdonosi jelszó): RC4-40 (V1 R2), RC4-128 (V2 R3), AES-128 (V4 R4), AES-256 R5, AES-256 R6; JS OpenAction, URI link és `payload.bin` csatolmány, mind visszafejtve, 0 hiba, a `CRYPT:` kiírás ellenőrizve |
 | `12f_enc_userpw.pdf` | felhasználói jelszavas (`secret`) AES-128: nem fejthető vissza, a kinyert tartalomban nincs nyílt szöveg |
 | `12g_enc_aes128_no_length.pdf` | a 12c a felső szintű `/Length` nélkül: V4 AESV2-nél a kulcs akkor is 16 byte |
-| `14a_pdf2str_tf_array_operand.pdf`, `14b_pdf2str_do_dict_operand.pdf`, `14c_pdf2str_bfrange_overflow.pdf` | a `pdf2str` robusztussága (4.5): tömb a `Tf`, dict a `Do` operandusában (nincs kivétel, az `ok` szöveg megvan), túlcsorduló `bfrange` a `/ToUnicode`-ban (a `bfchar` leképezés megmarad: `H`) |
 | `13a_text_content_raw.pdf`, `13b_text_content_flate.pdf`, `13c_text_content_aes128.pdf` | szöveges oldaltartalom (`Tj`, `TJ`, inline kép `(`-lel az adatban), nyersen, Flate-tel, ill. pypdf-fel AES-128-cal titkosítva (4.4): a `get_obj`/`deref`/`content_ops` lánc `Hello`, `World`-öt ad, az inline kép adata ép, a font feloldva |
-| `08_lzw_earlychange0_no_eod.pdf` (+ `08_payload.bin`) | három LZW csatolmány (10.9): `/EarlyChange 0` záró kód nélkül és alap EarlyChange záró kóddal (byte-ra egyeznek a payloaddal, a hiányzó EOD megjegyzés), valamint záró kód nélkül feloldhatatlan `/Length 99 0 R`-rel: ez az egyetlen hiba |
+| `14a_pdf2str_tf_array_operand.pdf`, `14b_pdf2str_do_dict_operand.pdf`, `14c_pdf2str_bfrange_overflow.pdf` | a `pdf2str` robusztussága (4.5): tömb a `Tf`, dict a `Do` operandusában (nincs kivétel, az `ok` szöveg megvan), túlcsorduló `bfrange` a `/ToUnicode`-ban (a `bfchar` leképezés megmarad: `H`) |
 
 - `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül. A titkosított minták (12a–12g) pypdf-fel készülnek, és csak akkor, ha hiányoznak (véletlen IV és só miatt nem determinisztikusak); pypdf nélkül a meglévő fájlok maradnak.
-- `run_tests.py` – lefuttatja a mintákat (a fenti két `samples/`-beli fájlt is) és a hozzájuk tartozó elvárásokat, valamint néhány egységtesztet (lexer token a buffer végén, `counts_upto`, `rfind_xref`). Kilépési kód 0, ha minden rendben; `-v` kapcsolóval a sikeres ellenőrzéseket is kiírja.
+- `run_tests.py` – lefuttatja a mintákat (a fenti két `samples/`-beli fájlt, az `uri_js.pdf`-et és a `tnef_container.pdf`-et is) és a hozzájuk tartozó elvárásokat, valamint egységteszteket (lexer token a buffer végén, `counts_upto`, `rfind_xref`, `objs_tree`, `num`, `content_ops`), és ha a `pdf2str` importálható, annak szövegét a 13-as és 14-es mintákon. Jelenleg 77 ellenőrzés. Kilépési kód 0, ha minden rendben; `-v` kapcsolóval a sikeres ellenőrzéseket is kiírja.
 
 ```bash
 python3 samples_new/run_tests.py -v
 ```
 
-Az eredeti (`d993039`) változaton ugyanez a futás 12 ellenőrzésen bukik, a javított változaton mind átmegy.
+Az eredeti (`d993039`) változaton a 10.1–10.7 javítások ellenőrzései közül 12 bukik, a jelenlegi változaton mind átmegy. A `samples/` tesztjei (`test_unit.py`, `test_samples.py`) a `samples/README.md` szerint futtathatók; a `pdfparse3.py` minden módosítása után mindhárom csomagot érdemes futtatni.
 
 ## 12. Tömeges vizsgálat: `pdfscan.py`
 
