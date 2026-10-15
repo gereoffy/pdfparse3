@@ -88,11 +88,29 @@ def glyph_unicode(name):
     if m:
         try: return ''.join(chr(int(n[i:i+4],16)) for i in range(3,len(n),4))
         except ValueError: return None
-    m=re.match(r'u([0-9A-Fa-f]{4,6})$',n)
+    m=re.match(r'u([0-9A-Fa-f]{4,6})$',n) or re.match(r'(?i)unic([0-9A-F]{4})$',n)   # (UNIC0041: nem szabvanyos iro)
     if m:
         try: return chr(int(m.group(1),16))
         except ValueError: return None
     return None
+
+# beagyazott Type1 font (/FontFile) beepitett kodolasa a fontprogram tiszta szoveges reszebol ("dup 252 /udieresis
+# put"), {kod: unicode}, vagy STANDARD ("/Encoding StandardEncoding def"), vagy None (nincs / nem olvashato)
+def _type1_builtin(p,desc):
+    if type(desc)!=dict or type(desc.get(b'/FontFile'))!=tuple: return None
+    s=p.get_obj(desc[b'/FontFile'][1])[1]
+    if s is None: return None
+    d=bytes(s.decode())
+    e=d.find(b'eexec')
+    clear=d[:e] if e>0 else d[:65536]
+    i=clear.find(b'/Encoding')
+    if i<0: return None
+    if re.match(rb'/Encoding\s+StandardEncoding\b',clear[i:i+40]): return STANDARD
+    m={}
+    for c,name in re.findall(rb'dup\s+(\d{1,3})\s*/([^\s/\[\]{}()<>%]+)\s+put',clear[i:]):
+        u=glyph_unicode(name.decode('latin-1'))
+        if u is not None and int(c)<256: m[int(c)]=u
+    return m or None
 
 # --- egybajtos kodolasok ---------------------------------------------------------------------------------------
 def _codec_table(codec):
@@ -200,6 +218,14 @@ class Font():
                 diffs=p.deref(enc.get(b'/Differences'))
             bf=fd.get(b'/BaseFont')
             symbolic=type(bf)==bytes and re.search(rb'Symbol|Dingbats|Wingdings',bf)
+            desc=p.deref(fd.get(b'/FontDescriptor'))
+            # beagyazott Type1 font: ha nincs (ervenyes) kodolasnev, ill. szimbolikus fontnal /BaseEncoding nelkuli
+            # /Differences eseten az alap a font beepitett kodolasa (ISO 32000 9.6.6); pl. "/Encoding /NULL" mellett
+            # a fontprogram sajat ekezetes kodolasa
+            if base is None and sub in (b'/Type1',b'/MMType1') and type(desc)==dict and (type(enc)!=dict or
+                    int(num(p.deref(desc.get(b'/Flags')),0))&4):
+                base=_type1_builtin(p,desc)
+                if base: symbolic=False   # (a sajat kodolasa ismert)
             if base is None and not symbolic:
                 # (beepitett kodolas: a nem beagyazott alapfontoknal Standard, a TrueType-nal tobbnyire WinAnsi)
                 base=WINANSI if sub==b'/TrueType' else STANDARD

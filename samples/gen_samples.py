@@ -303,6 +303,18 @@ def gen_text():
         (3,b'<< /Type /Page /Parent 2 0 R /Resources '+helv+b' /Contents 4 0 R >>'),
         (4,st(b'',b'BT /F1 12 Tf 50 300 Td (visible) Tj 400 0 Td (cropped) Tj ET BT /F1 12 Tf -900 100 Td (far away) Tj ET '
                   b'BT 3 Tr /F1 12 Tf 50 200 Td (ocr layer) Tj ET'))])
+    # beagyazott Type1 font ervenytelen kodolasnevvel (/Encoding /NULL, pl. egy biztositoi levelgenerator): a fontprogram
+    # sajat (beepitett) kodolasa ervenyes (dup 252 /udieresis put); es egy /UNICxxxx glifnev (nem szabvanyos iro)
+    ff=(b'%!PS-AdobeFont-1.0: XYZ\n/FontName /XYZ def\n/Encoding 256 array\n0 1 255 {1 index exch /.notdef put} for\n'+
+        b''.join(b'dup %d /%s put\n'%(c,bytes([c])) for c in range(97,123))+
+        b'dup 252 /udieresis put\ndup 233 /eacute put\ndup 225 /aacute put\nreadonly def\ncurrentfile eexec\n'+bytes(range(128,192)))
+    P['text_font_encodings']=page(b'<< /Font << /F1 5 0 R /F2 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica '
+        b'/Encoding << /Type /Encoding /Differences [65 /UNIC0151] >> >> >> >>',
+        b'BT /F1 12 Tf 72 700 Td (\xfcgyf\xe9lszolg\xe1lat) Tj ET BT /F2 12 Tf 72 680 Td (A) Tj ET',
+        [(5,b'<< /Type /Font /Subtype /Type1 /BaseFont /XYZ /Encoding /NULL /FirstChar 32 /LastChar 255 /FontDescriptor 6 0 R >>'),
+         (6,b'<< /Type /FontDescriptor /FontName /XYZ /Flags 4 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 900 '
+            b'/Descent -200 /CapHeight 700 /StemV 80 /FontFile 7 0 R >>'),
+         (7,st(b'/Length1 %d /Length2 64 /Length3 0'%(len(ff)-64),ff))])
     return P
 
 # szerkezeti hibak: szemet a header elott, csonka file, iro program altal elrontott xref

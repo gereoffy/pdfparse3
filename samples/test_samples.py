@@ -72,6 +72,7 @@ EXPECTED={
     'text_gid_cid':        (0, 0, [], []),
     'text_multipage':      (0, 0, [], []),
     'text_outside_box':    (0, 0, [], []),
+    'text_font_encodings': (0, 0, [], []),
     'text_encrypted':      (0, 0, [('pdfstream.js',b'app.alert("encrypted js");'),('secret.exe',b'MZ secret attachment')], []),
     'uri_js':              (0, 0, [('pdfstream.launch',b'/F javascript:void(0)')],
                             [('pdfstream.uri.js',b'app.alert(1)'),('pdfstream.uri.js',b"var x=window.open('/a')")]),   # (+ pdfstream.urls, l. test_urls)
@@ -172,6 +173,7 @@ TEXT={'text_tounicode':'\u00c1rv\u00edzt\u0171r\u0151\nt\u00fck\u00f6rf\u00far\u
       'text_multipage':'Cover page\n'+' '.join('two%d'%i for i in range(60))+'\n'+' '.join('three%d'%i for i in range(60)),
                                                                  # fedolap: + a kovetkezo oldalak a 100 szoig
       'text_outside_box':'visible\nocr layer',                  # a CropBox-on / MediaBox-on kivuli szoveg kimarad
+      'text_font_encodings':'\u00fcgyf\u00e9lszolg\u00e1lat\n\u0151',   # Type1 beepitett kodolas (/Encoding /NULL), /UNIC0151
       'basic':None,'notpdf':None}                                # (nincs szoveg / nem pdf)
 
 def test_text():
