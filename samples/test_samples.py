@@ -99,6 +99,10 @@ EXPECTED={
     'unterminated_string': (1, 1, [('pdfstream.js',b'after_string()')], []),
     'missing_endobj':      (0, 1, [('pdfstream.js',JS),EVIL], []),   # validate: 1 (2 obj endobj nelkul); content: nem szamolja
     'xref_then_objs':      (0, 0, [('pdfstream.js',JS),EVIL], [('pdfstream.js',b'after_xref()')]),  # nincs az xref-ben
+    # obj ertekek (l. test_objects)
+    'nullrun_values':      (0, 0, [], []),
+    'ref_filter':          (0, 0, [('ref.bin',PAYLOAD[:1000])], []),     # hivatkozott /Filter es /DecodeParms: kibontva
+    'missing_endstream':   (1, 1, [('pdfstream.js',b'after_missing_endstream()')], []),   # a /Length utani obj-ek megvannak
 }
 
 # a diagnozisok (TRANSFER, TRUNCATED, JUNK, osszesitett xref hibak) pontosan ezeknel a mintaknal jelenjenek meg
@@ -239,6 +243,32 @@ def test_diagnoses():
             want=DIAG.get(name,[])
             assert len(got)==len(want) and all(g.startswith(w) for g,w in zip(sorted(got),sorted(want))), "%s: %s != %s"%(name,got,want)
 
+def parsed(name):
+    p=pdfparse.PDFParser(SAMPLES[name])
+    with contextlib.redirect_stdout(io.StringIO()): p.parse()
+    return p
+
+def test_objects():
+    # rovid null / true / false sorozatok: a get_obj ertekeiben mind megvan; a hosszu null sorozat is atjon (5000 elem)
+    p=parsed('nullrun_values')
+    assert p.get_obj(1)[0][b'/OpenAction']==[('R',3),b'/XYZ',b'null',b'null',0]
+    sh=p.get_obj(5)[0]
+    assert sh[b'/Extend']==[b'true',b'true'] and sh[b'/Decode']==[b'false',b'true',b'false'], sh
+    nums=p.get_obj(6)[0][b'/Nums']
+    assert nums[0]==0 and nums[1][-1]==('R',3), nums[1][-3:]
+    # hivatkozott /Filter es /DecodeParms: a get_obj streamje is kibontva (a predictorral)
+    p=parsed('ref_filter')
+    v,s=p.get_obj(7)
+    assert s.fmt==[b'/FlateDecode'] and bytes(s.decode(predictor=True))==PAYLOAD[:1000]
+    # hianyzo endstream: a stream a /Length-nel er veget, az utana kovetkezo oldal es JS megvan, a content stream a sajatja
+    p=parsed('missing_endstream')
+    v,s=p.get_obj(4)
+    assert bytes(s.data)==b'0123456789', s.data
+    assert p.get_obj(3)[0][b'/Type']==b'/Page' and p.get_obj(5)[0][b'/S']==b'/JavaScript'
+    assert bytes(p.get_obj(7)[1].decode())==b'0 0 m 100 100 l S'
+    import pdf2str
+    assert len(pdf2str.pages(p,maxn=10))==1
+
 def test_expected_complete():
     assert set(EXPECTED)==set(SAMPLES)
 
@@ -248,6 +278,7 @@ def test_samples():
 
 if __name__=='__main__':
     test_expected_complete()
+    test_objects()
     test_urls()
     test_text()
     test_encrypted()

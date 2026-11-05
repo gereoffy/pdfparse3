@@ -153,6 +153,7 @@ def gen():
     P.update(gen_crlf_nostream())
     P.update(gen_crlf_nostream(b'\n'))
     P.update(gen_structure(P['basic']))
+    P.update(gen_objvalues())
     return P
 
 # szabalyos MS-OXTNEF kontener (winmail.dat) egy csatolmannyal: alairas, kulcs, attributumok (szint, azonosito, hossz,
@@ -448,6 +449,46 @@ def gen_xrefstm():
     # a /Prev 3 byte-tal elcsuszik
     bad=bytearray(out); i=bad.rfind(b'/Prev %d'%xo); bad[i+6:i+6+len(str(xo))]=str(xo+3).encode()
     P['incr_badprev']=bytes(bad)
+    return P
+
+# obj ertekek, amelyeket a get_obj-nak hianytalanul kell visszaadnia (a test_samples.py test_objects-e nezi)
+def gen_objvalues():
+    P={}
+    pages=(2,b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
+    # rovid null / true / false sorozatok ertekek (a parse_pdf_obj korabban atugrotta oket, a get_obj ertekeibol kimaradtak:
+    # /Extend [true], [3 0 R /XYZ null 0]); a legalabb 4096 elemu null sorozat (tagged pdf /ParentTree) atugorhato
+    cat=(1,b'<< /Type /Catalog /Pages 2 0 R /OpenAction [3 0 R /XYZ null null 0] >>')
+    page=(3,b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Shading << /S 5 0 R >> >> >>')
+    sh=(5,b'<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 200 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> '
+          b'/Extend [true true] /Decode [false true false] >>')
+    tree=(6,b'<< /Nums [0 ['+b'null '*5000+b'3 0 R]] >>')
+    P['nullrun_values']=build([cat,pages,page,(4,st(b'',b'/S sh')),sh,tree])
+    # hivatkozott /Filter es /DecodeParms ("/Filter 8 0 R"): a csatolmany PNG (Up) predictorral tomoritve, 10 byte-os sorok
+    raw=PAYLOAD[:1000]
+    up=bytearray(); prev=bytes(10)
+    for i in range(0,len(raw),10):
+        r=raw[i:i+10]; up+=b'\x02'+bytes((a-b)&0xff for a,b in zip(r,prev)); prev=r
+    z=zlib.compress(bytes(up))
+    P['ref_filter']=build([(1,b'<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(a) 6 0 R] >> >> >>'),pages,
+                           (3,b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>'),
+                           (6,b'<< /Type /Filespec /F (ref.bin) /EF << /F 7 0 R >> >>'),
+                           (7,b'<< /Type /EmbeddedFile /Filter 8 0 R /DecodeParms 9 0 R /Length %d >>\nstream\n'%len(z)+z+b'\nendstream'),
+                           (8,b'/FlateDecode'),(9,b'<< /Predictor 12 /Columns 10 >>')])
+    # hianyzo endstream: a /Length utan mar a kovetkezo obj-ek jonnek, az endstream egy kesobbi obj-e. A stream a /Length-nel er
+    # veget, kulonben a koztes obj-eket (az oldalt es a JS-t) is lenyelne
+    out=bytearray(b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n'); offs={}
+    def add(oid,body,end=b'\nendobj\n'):
+        offs[oid]=len(out); out.extend(b'%d 0 obj\n'%oid+body+end)
+    add(1,b'<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R >>')
+    add(*pages)
+    add(4,b'<< /Length 10 >>\nstream\n0123456789\nendobj\n',end=b'')   # (endstream nelkul)
+    add(3,b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 7 0 R >>')
+    add(5,b'<< /S /JavaScript /JS (after_missing_endstream\\(\\)) >>')
+    add(7,st(b'',b'0 0 m 100 100 l S'))
+    xo=len(out)
+    out.extend(b'xref\n0 8\n0000000000 65535 f \n'+b''.join(b'%010d 00000 n \n'%offs[i] if i in offs else b'0000000000 00000 f \n' for i in range(1,8)))
+    out.extend(b'trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n'%xo)
+    P['missing_endstream']=bytes(out)
     return P
 
 if __name__=='__main__':

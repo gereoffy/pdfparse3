@@ -811,6 +811,21 @@ def objs_decodeparms(objs):
     return None
 
 
+# hivatkozott /Filter es /DecodeParms ("/Filter 13 0 R", "/Filter [13 0 R]"): a lexer szintjen (objs_value,
+# objs_decodeparms) nem oldhato fel, kulonben a stream kibontatlan maradna. top: a stream dict-je (objs_tree), deref: a
+# hivatkozas feloldasa
+def resolve_filter(stream,top,deref):
+    if type(top)!=dict: return
+    f=top.get(b'/Filter')
+    if type(f)==tuple or (type(f)==list and any(type(x)==tuple for x in f)):
+        f=deref(f)
+        if type(f)==bytes: stream.fmt=[f]
+        elif type(f)==list: stream.fmt=[deref(x) for x in f]
+    dp=top.get(b'/DecodeParms',top.get(b'/DP'))
+    if type(dp)==tuple or (type(dp)==dict and any(type(x)==tuple for x in dp.values())):
+        dp=deref(dp)
+        if type(dp)==dict: stream.parms={k:deref(x) for k,x in dp.items()}
+
 # van-e a [s,e) tartomanyban egy endobj, utana egy "N G obj" fejlec (a hianyzo endstream jele, l. parse_pdf_obj)
 def objs_after(d,s,e):
     k=d.find(b'endobj',s,e)
@@ -1617,6 +1632,7 @@ class PDFParser():
 
     def parse_stream(self,oid,objs,stream):
         self.check_stream_length(stream)
+        if len(objs)>3 and objs[2]==b'obj': resolve_filter(stream,objs_tree(objs,3)[0],self.refval)
         top=top_dict(objs)
         is_file=top.get(b'/Type')==b'/EmbeddedFile'
         # minden streamet kitomoritunk (tomoritesi hibak keresese). titkositott file-nal ennek nincs ertelme,
@@ -1720,6 +1736,20 @@ class PDFParser():
             m=re_lenobj.match(self.d,pos)
             if m: return int(m.group(1))
         return None
+
+    # a hivatkozott obj erteke a file-bol, a feldolgozas kozben (a get_obj meg nem hasznalhato: a kesobbi obj-ek nincsenek meg
+    # a dom-ban): az xref szerinti helyen, vagy a file-beli utolso elofordulasa; mas ertek valtozatlan. (/Filter, /DecodeParms)
+    def refval(self,v,depth=0):
+        if not (type(v)==tuple and len(v)==2 and v[0]=='R') or depth>8: return v
+        x=self.xref.get(v[1])
+        pos=x[0] if x and type(x[0])==int and re_objstart.match(self.d,x[0]) else None
+        if pos is None:
+            st=[p for (o,g),ps in self.obj_starts().items() if o==v[1] for p in ps]
+            pos=max(st) if st else None
+        if pos is None: return None
+        q,objs,s=parse_pdf_obj(self.d,pos,len(self.d),stop=b'endobj',err=lambda m: None,lenref=self.resolve_length)
+        if len(objs)<=3 or objs[2]!=b'obj': return None
+        return self.refval(objs_tree(objs,3)[0],depth+1)
 
     def obj_starts(self):
         if self._starts==None:
@@ -2266,19 +2296,7 @@ class PDFParser():
             q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',err=lambda m: None,lenref=self.resolve_length)
             if self.crypt and oid!=self.encrypt: self.decrypt_obj(oid,objs,stream)
             if len(objs)>3 and objs[2]==b'obj': r=(objs_tree(objs,3)[0],stream)
-            # hivatkozott /Filter es /DecodeParms ("/Filter 13 0 R"): a lexer szintjen nem oldhato fel, itt igen
-            # (kulonben a stream kibontatlan maradna)
-            top=r[0]
-            if stream is not None and type(top)==dict:
-                f=top.get(b'/Filter')
-                if type(f)==tuple:
-                    f=self.deref(f)
-                    if type(f)==bytes: stream.fmt=[f]
-                    elif type(f)==list: stream.fmt=[self.deref(x) for x in f]
-                dp=top.get(b'/DecodeParms',top.get(b'/DP'))
-                if type(dp)==tuple:
-                    dp=self.deref(dp)
-                    if type(dp)==dict: stream.parms={k:self.deref(v) for k,v in dp.items()}
+            if stream is not None: resolve_filter(stream,r[0],self.deref)
         else:
             stm=self.xref_stm.get(oid,(None,))[0]
             if stm is None:
