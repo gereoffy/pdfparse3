@@ -811,6 +811,11 @@ def objs_decodeparms(objs):
     return None
 
 
+# van-e a [s,e) tartomanyban egy endobj, utana egy "N G obj" fejlec (a hianyzo endstream jele, l. parse_pdf_obj)
+def objs_after(d,s,e):
+    k=d.find(b'endobj',s,e)
+    return k>=0 and re_objstart.search(d,k+6,e) is not None
+
 NULLCHUNKS=[b' null'*4096,b' null'*64,b' null']
 re_nullrun=re.compile(rb'(?:[\x00\t\n\x0c\r ]+(?:null|true|false)(?![^\x00\t\n\x0c\r ()<>\[\]{}/%]))+')
 
@@ -915,6 +920,16 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
 #                    if d[q]==10 and d[q-1]==13: q-=1
                 # 'q' points to end of stream data!
 #                print("STREAM DATA  %s  0x%X - 0x%X  %d/%d%s"%(str(b'---' if not filt else b''.join(filt)), p,q,q-p,stream_len,"  !!!" if (q-p)<stream_len else ""))
+                if q>p and 0<stream_len<(q-p)-3 and objs_after(d,p+stream_len,q):
+                    # hianyzo endstream: a /Length utan mar obj-ek kovetkeznek (endobj, majd "N G obj"), az endstream egy
+                    # kesobbi obj-e. A stream a /Length-nel er veget, kulonben az obj-eket is lenyelne (a CoreGraphics is
+                    # igy olvassa)
+                    err("STREAM: missing endstream, objects after /Length=%d at 0x%X"%(stream_len,p))
+                    stream=PDFStream(d[p:p+stream_len],filt,parms)
+                    stream.pos,stream.endpos,stream.declared=p,p+stream_len,declared
+                    objs.append(stream)
+                    p+=stream_len
+                    continue
                 if q>p:
                     if stream_len>(q-p):
                         # a /Length utan nincs endstream (azt fent mar neztuk), tehat a /Length rossz:
