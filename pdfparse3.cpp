@@ -2,7 +2,7 @@
 // Copyright (c) 2026 A'rpi - part of jpeg-nitro (https://github.com/gereoffy/jpeg-nitro)
 // The tolerance of pdfparse3 (MIT, https://github.com/gereoffy/pdfparse3), ported.
 //
-// nitropdf_doc: see nitropdf_doc.h. The lexer and the object reader keep pdfparse3's tolerance:
+// nitropdf: see nitropdf.h. The lexer and the object reader keep pdfparse3's tolerance:
 // unterminated strings closed at the end of their line (without quadratic time on garbage full of
 // '('), a missing endobj ended by the next "N G obj", a stream's end from its /Length only where
 // endstream follows it, otherwise from the endstream found, the referenced /Length resolved, junk
