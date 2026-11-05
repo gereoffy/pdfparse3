@@ -829,10 +829,12 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
         # startxref. Itt lezarjuk, kulonben az utana kovetkezo obj-eket is lenyelnenk.
         if data==b'obj' and len(objs)>3 and type(objs[-2])==int and type(objs[-3])==int:
             return starts[-3],objs[:-3],stream
-        if data in (b'null',b'true',b'false'):
+        if data in (b'null',b'true',b'false') and d.startswith(NULLCHUNKS[0],p) and p+len(NULLCHUNKS[0])<=pend:
             # hosszu "null null null ..." sorozatok (pl. tagged pdf /ParentTree: szazmillio byte is lehet) atugrasa
             # egyben: az elemzeshez nem kellenek, es szintaktikai hiba sem lehet bennuk. A szabalyos " null" ismetlodest
-            # nagy darabokban, byte osszehasonlitassal ugorjuk at (gyors), a maradekot regex-szel.
+            # nagy darabokban, byte osszehasonlitassal ugorjuk at (gyors), a maradekot regex-szel. Csak ha legalabb
+            # 4096 " null" kovetkezik: a rovid sorozatok ertekek (/Extend [true true], [R /XYZ null null 0]), azokat
+            # nem szabad elhagyni (a get_obj ertekeibol kimaradtak).
             for chunk in NULLCHUNKS:
                 while d.startswith(chunk,p) and p+len(chunk)<=pend: p+=len(chunk)
             m=re_nullrun.match(d,p,pend)
@@ -2249,6 +2251,19 @@ class PDFParser():
             q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',err=lambda m: None,lenref=self.resolve_length)
             if self.crypt and oid!=self.encrypt: self.decrypt_obj(oid,objs,stream)
             if len(objs)>3 and objs[2]==b'obj': r=(objs_tree(objs,3)[0],stream)
+            # hivatkozott /Filter es /DecodeParms ("/Filter 13 0 R"): a lexer szintjen nem oldhato fel, itt igen
+            # (kulonben a stream kibontatlan maradna)
+            top=r[0]
+            if stream is not None and type(top)==dict:
+                f=top.get(b'/Filter')
+                if type(f)==tuple:
+                    f=self.deref(f)
+                    if type(f)==bytes: stream.fmt=[f]
+                    elif type(f)==list: stream.fmt=[self.deref(x) for x in f]
+                dp=top.get(b'/DecodeParms',top.get(b'/DP'))
+                if type(dp)==tuple:
+                    dp=self.deref(dp)
+                    if type(dp)==dict: stream.parms={k:self.deref(v) for k,v in dp.items()}
         else:
             stm=self.xref_stm.get(oid,(None,))[0]
             if stm is None:
