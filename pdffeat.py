@@ -44,7 +44,7 @@ OPS_COLOR={b'g',b'G',b'rg',b'RG',b'k',b'K',b'cs',b'CS',b'sc',b'scn',b'SC',b'SCN'
 # a Producer / Creator: programcsaladokra (a verziok, a cegnevek nelkul). Elso talalat szamit.
 FAMILIES=[('autocad',r'autocad|autodesk dwg|acad|pdfplot'),('revit',r'revit'),('archicad',r'archicad|graphisoft'),
     ('microstation',r'microstation|bentley'),('solidworks',r'solidworks'),('inventor',r'inventor'),('catia',r'catia'),
-    ('creo',r'creo|pro/engineer|proe'),('siemens-nx',r'\bnx\b|unigraphics|solid edge'),('bricscad',r'bricscad'),
+    ('prepress',r'creo normalizer|prinergy'),('creo',r'creo (parametric|elements|view)|pro/engineer|\bproe\b'),('siemens-nx',r'\bnx\b|unigraphics|solid edge'),('bricscad',r'bricscad'),
     ('draftsight',r'draftsight'),('progecad',r'progecad'),('allplan',r'allplan'),('vectorworks',r'vectorworks'),
     ('sketchup',r'sketchup'),('qgis',r'qgis'),('arcgis',r'arcgis|arcmap|esri'),('eplan',r'eplan'),('kicad',r'kicad'),
     ('altium',r'altium'),('eagle',r'eagle'),('coreldraw',r'corel'),('visio',r'visio'),('illustrator',r'illustrator'),
