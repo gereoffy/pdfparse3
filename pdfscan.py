@@ -9,6 +9,9 @@
 #                                           neven (a csomagba nem kerulhet utvonal). Ezt kell hasznalni mintakereshez!
 #   pdfscan.py paths [-0] files.txt ids.txt az id-khoz tartozo teljes utvonalak (csak a szerveren hasznalhato, a
 #                                           kimenete tartalmazza az utvonalakat; tar-hoz NEM: a tar eltarolja a konyvtarakat)
+#   pdfscan.py select [-n 400] [--per 3] [--drawings 150] [--max-mb 30] [--seed 1] [--why] LOG.jsonl.gz ...
+#                                           mintakeszlet a --mode features naplobol (nitropdf): id-k soronkent (a 'pack'
+#                                           ids.txt-je), --why: a kivalasztas oka is (id, nev, meret, a lefedett jellemzok)
 #
 # scan:
 #   -j N          parhuzamos processzek szama (alapbol a CPU-k szama)
@@ -19,7 +22,9 @@
 #   --timeout S   file-onkenti idokorlat masodpercben (alapbol 120)
 #   --max-size MB ennel nagyobb file-t nem vizsgal, csak naplozza (alapbol 500)
 #   --mode        validate: hibaellenorzes (xref bejarassal), content: tartalom kinyeres (linearis olvasas),
-#                 both: mindketto (alapbol)
+#                 both: mindketto (alapbol), features: a megjeleniteshez hasznalt jellemzok (pdffeat.py: fontok,
+#                 kepszurok, szinterek, arnyalatok, atlatszosag, retegek, az elso oldalak operatorszama, Producer /
+#                 Creator) a content mod hibalistajaval, szoveg nelkul
 #   --all         nem csak a .pdf kiterjesztesu file-okat vizsgalja (a nem pdf-ek "notpdf" statusszal kerulnek be)
 #   --follow-dirs a konyvtarra mutato symlinkeket is koveti (a file-ra mutatokat mindig)
 #   --no-text     content modban ne nyerje ki az elso oldal szoveget (pdf2str). Alapbol kinyeri, de a naploba
@@ -71,6 +76,10 @@ try:
     import pdf2str   # (az elso oldal szovege, content modban; ha nincs meg, kimarad)
 except ImportError:
     pdf2str=None
+try:
+    import pdffeat   # (--mode features)
+except ImportError:
+    pdffeat=None
 
 MAX_ERRORS=50      # file-onkent ennyi hibauzenetet naplozunk (az errcnt mindig a teljes lista pontszama, pdfparse.score)
 DAMAGE=getattr(pdfparse,'DAMAGE',10)   # ettol a sulytol serules (kisebb: figyelmeztetes), l. pdfparse.score
@@ -123,14 +132,18 @@ def init_worker(seen=None):
     signal.signal(signal.SIGALRM,on_alarm)
     signal.signal(signal.SIGINT,signal.SIG_IGN)   # a Ctrl-C-t a fo processz kezeli
 
-def run_mode(data,validate,text=False):
+def run_mode(data,validate,text=False,feat=False):
     out=io.StringIO()
     tx=None
+    fx=None
     with contextlib.redirect_stdout(out):
         # (mint a pdfparse.parse_pdf, de a parser megmarad a szoveg kinyereshez: nem kell ketszer feldolgozni)
         p=pdfparse.PDFParser(data,False,validate)
         if p.parse(): c,e,errs=p.content,pdfparse.score(p.errors),p.errors
         else: c,e,errs=None,99,[(99,"not pdf")]
+        if feat and c is not None:
+            try: fx=pdffeat.features(p)
+            except Exception: fx={'error':traceback.format_exc()[-MAX_MSG:]}
         if text and c is not None:
             t=time.time()
             terr=[]
@@ -140,6 +153,7 @@ def run_mode(data,validate,text=False):
             if terr: tx['error']=terr[0][-MAX_MSG:]
     r={'errcnt':e,'errors':[[w,m[:MAX_MSG]] for w,m in (errs or [])[:MAX_ERRORS]]}
     if tx is not None: r['text']=tx
+    if fx is not None: r['features']=fx
     if errs and len(errs)>MAX_ERRORS: r['errors_total']=len(errs)
     if not validate and c:
         r['items']=[{'name':n if isinstance(n,str) else repr(n),'size':len(d),'sha256':hashlib.sha256(bytes(d)).hexdigest(),
@@ -174,6 +188,7 @@ def scan_file(job):
         notpdf=False
         if opts['mode'] in ('both','validate'): rec['validate'],notpdf=run_mode(data,True)
         if opts['mode'] in ('both','content') and not notpdf: rec['content'],notpdf=run_mode(data,False,opts['text'])
+        if opts['mode']=='features': rec['content'],notpdf=run_mode(data,False,False,True)
         rec['status']='notpdf' if notpdf else 'ok'
     except Timeout:
         rec['status']='timeout'
@@ -205,8 +220,11 @@ def cmd_scan(argv):
         elif a=='--no-text': opts['text']=False
         else: paths.append(a)
         i+=1
-    if not paths or opts['mode'] not in ('both','validate','content'):
-        print("usage: pdfscan.py scan [-j N] [-o FILE] [--files FILE] [--resume] [--timeout S] [--max-size MB] [--mode both|validate|content] [--all] [--follow-dirs] [--no-dedup] [--no-text] DIR|FILE ...")
+    if opts['mode']=='features' and pdffeat is None:
+        print("--mode features needs pdffeat.py next to pdfscan.py",file=sys.stderr)
+        sys.exit(1)
+    if not paths or opts['mode'] not in ('both','validate','content','features'):
+        print("usage: pdfscan.py scan [-j N] [-o FILE] [--files FILE] [--resume] [--timeout S] [--max-size MB] [--mode both|validate|content|features] [--all] [--follow-dirs] [--no-dedup] [--no-text] DIR|FILE ...")
         print("(details at the top of pdfscan.py)")
         sys.exit(1)
     opts['max_size']*=1024*1024
@@ -252,6 +270,7 @@ def cmd_scan(argv):
             # (a parancssorbol csak a kapcsolok, a konyvtarak nem: azok utvonalak)
             out.write(json.dumps({'meta':{'started':time.strftime('%Y-%m-%d %H:%M:%S'),'roots':len(paths),'python':sys.version,
                 'parser_sha256':hashlib.sha256(open(pdfparse.__file__,'rb').read()).hexdigest(),
+                'pdffeat_sha256':hashlib.sha256(open(pdffeat.__file__,'rb').read()).hexdigest() if pdffeat else None,
                 'opts':dict((k,v) for k,v in opts.items() if k not in ('out','files'))}})+'\n')
         pool=multiprocessing.Pool(opts['jobs'],init_worker,(seen,),maxtasksperchild=2000)
         try:
@@ -440,11 +459,146 @@ def cmd_paths(argv):
     out.flush()
     if len(found)<len(ids): print("%d ids not found"%(len(ids)-len(found)),file=sys.stderr)
 
+# --- mintakeszlet a features naplobol (nitropdf) ---
+
+CAD={'autocad','revit','archicad','microstation','solidworks','inventor','catia','creo','siemens-nx','bricscad',
+     'draftsight','progecad','allplan','vectorworks','sketchup','qgis','arcgis','eplan','kicad','altium','eagle'}
+BIG={'A3','A2','A1','A0','tabloid','large','huge'}
+
+def bucket(n,limits,names):
+    for l,nm in zip(limits,names):
+        if n<=l: return nm
+    return names[-1]
+
+# egy file jellemzoi cimkekent (a kivalasztas ezeket fedi le)
+def feature_tags(r):
+    c=r.get('content') or {}
+    F=c.get('features')
+    if not F or 'error' in F: return None
+    t=set()
+    fam=(pdffeat.pick_family(F.get('producer'),F.get('creator')) if pdffeat else F.get('family')) or 'unknown'   # (a mostani tablazattal)
+    t.add('fam:'+(fam.split(':')[0] if fam.startswith('other') else fam))
+    ops=F.get('ops') or {}
+    sizes=F.get('sizes') or {}
+    big=any(k in sizes for k in ('A3','A2','A1','A0','tabloid','large','huge','medium'))
+    if fam in CAD or (big and ops.get('path',0)>=5000 and ops.get('path',0)>=10*ops.get('text',0)): t.add('drawing')
+    for k in F.get('fonts',{}): t.add('font:'+k)
+    for k in F.get('cmaps',{}): t.add('cmap:'+(k if k in ('Identity-H','Identity-V','embedded','none') else 'predefined'))
+    for k in F.get('encodings',{}): t.add('enc:'+k.split('+')[0])
+    for k in F.get('images',{}): t.add('img:'+k)
+    for k in F.get('cs',{}):
+        k=re.sub(r'^(image:)?(DeviceN)\d+',r'\1\2',k)
+        t.add('cs:'+k)
+    for k in F.get('bpc',{}):
+        if k!='8': t.add('bpc:'+k)
+    for k in F.get('shadings',{}): t.add('sh:'+k)
+    for k in F.get('patterns',{}): t.add('pat:'+k)
+    for k in F.get('functions',{}): t.add('fn:'+k)
+    for k in F.get('transparency',{}): t.add('tr:'+k)
+    for k in F.get('blend',{}): t.add('bm:'+k)
+    for k in F.get('annots',{}): t.add('annot:'+k)
+    if F.get('ocg'): t.add('ocg')
+    if F.get('ocg_off'): t.add('ocg_off')
+    for k in ('acroform','xfa','linearized','xrefstm','rotate','userunit','ops_capped'):
+        if F.get(k): t.add(k)
+    if F.get('encrypt'): t.add('encrypt:'+F['encrypt'].split(' ')[0]+(' '+F['encrypt'].split(' ')[1] if ' ' in F['encrypt'] else ''))
+    if F.get('objstm'): t.add('objstm')
+    if F.get('eofs',1)>1: t.add('updated')
+    for k in sizes: t.add('paper:'+k)
+    t.add('pages:'+bucket(F.get('pages',0) or 0,(0,1,10,100),('0','1','2-10','11-100','>100')))
+    t.add('ops:'+bucket(ops.get('all',0),(1000,10000,100000,1000000),('<1k','1k-10k','10k-100k','100k-1M','>1M')))
+    if ops.get('Do'): t.add('ops:Do')
+    if ops.get('inline'): t.add('ops:inline')
+    if ops.get('type3'): t.add('ops:type3')
+    if ops.get('oc'): t.add('ops:oc')
+    if ops.get('dash'): t.add('ops:dash')
+    e=c.get('errcnt',0)
+    if e>=DAMAGE and e<99: t.add('damaged')
+    elif e: t.add('warning')
+    v=F.get('ver')
+    if v: t.add('ver:'+v)
+    return t
+
+def cmd_select(argv):
+    import random
+    opts={'n':400,'per':3,'drawings':150,'max_mb':30,'seed':1,'why':False,'stats':False}
+    files=[]
+    i=0
+    while i<len(argv):
+        a=argv[i]
+        if a in ('-n','--per','--drawings','--max-mb','--seed'):
+            opts[{'-n':'n','--per':'per','--drawings':'drawings','--max-mb':'max_mb','--seed':'seed'}[a]]=int(argv[i+1]); i+=1
+        elif a=='--why': opts['why']=True
+        elif a=='--stats': opts['stats']=True
+        else: files.append(a)
+        i+=1
+    if not files:
+        print("usage: pdfscan.py select [-n 400] [--per 3] [--drawings 150] [--max-mb 30] [--seed 1] [--why] [--stats] LOG.jsonl.gz ...")
+        sys.exit(1)
+    recs={}
+    seen_sha=set()
+    for fn in files:
+        with open_out(fn,'r') as f:
+            try:
+                for l in f:
+                    try: r=json.loads(l)
+                    except ValueError: continue
+                    if 'meta' in r or r.get('status')!='ok': continue
+                    if r.get('sha256') in seen_sha: continue
+                    t=feature_tags(r)
+                    if t is None: continue
+                    seen_sha.add(r.get('sha256'))
+                    recs[r['id']]=(r.get('name',''),r.get('size',0),t)
+            except (EOFError,OSError): pass
+    tagfiles=collections.defaultdict(list)
+    for i,(n,sz,t) in recs.items():
+        for k in t: tagfiles[k].append(i)
+    if opts['stats']:
+        print("%d files (status ok, distinct content)"%(len(recs)),file=sys.stderr)
+        for k,v in sorted(tagfiles.items(),key=lambda kv:(kv[0].split(':')[0],-len(kv[1]))):
+            print("  %8d  %6.2f%%  %s"%(len(v),100.0*len(v)/max(1,len(recs)),k),file=sys.stderr)
+    rnd=random.Random(opts['seed'])
+    order={i:rnd.random() for i in recs}
+    maxsz=opts['max_mb']*1024*1024
+    chosen={}   # id -> az ok (cimkek), ami miatt bekerult
+    covered=collections.Counter()
+    # a rajzokra jellemzo cimkekbol (a CAD programok, nagy papir, retegek) negyszer annyi
+    def need(k): return opts['per']*(4 if k=='drawing' or k.startswith('paper:') and k[6:] in BIG or k=='ocg' or k.startswith('fam:') and k[4:] in CAD else 1)
+    # a ritka cimkek elol; cimkenkent a legtobb meg le nem fedett cimket hozo (kisebb meretu) file-ok
+    for k in sorted(tagfiles,key=lambda k:len(tagfiles[k])):
+        while covered[k]<min(need(k),len(tagfiles[k])):
+            cand=[i for i in tagfiles[k] if i not in chosen]
+            if not cand: break
+            def gain(i):
+                n,sz,t=recs[i]
+                return (sz<=maxsz,sum(1 for x in t if covered[x]<need(x)),-sz//(1024*1024),order[i])
+            best=max(cand,key=gain)
+            chosen[best]=k
+            for x in recs[best][2]: covered[x]+=1
+    # a rajzok kiegeszitese, majd veletlen feltoltes
+    draw=sorted((i for i in tagfiles.get('drawing',[]) if i not in chosen and recs[i][1]<=maxsz),key=lambda i:order[i])
+    for i in draw:
+        if sum(1 for j in chosen if 'drawing' in recs[j][2])>=opts['drawings'] or len(chosen)>=opts['n']: break
+        chosen[i]='drawing (fill)'
+    rest=sorted((i for i in recs if i not in chosen and recs[i][1]<=maxsz),key=lambda i:order[i])
+    for i in rest:
+        if len(chosen)>=opts['n']: break
+        chosen[i]='random'
+    total=sum(recs[i][1] for i in chosen)
+    print("selected %d of %d files, %.1f MB, drawings %d, tags covered %d of %d"%(len(chosen),len(recs),total/1e6,
+          sum(1 for j in chosen if 'drawing' in recs[j][2]),sum(1 for k in tagfiles if covered[k]),len(tagfiles)),file=sys.stderr)
+    for i,why in sorted(chosen.items(),key=lambda kv:kv[1]):
+        if opts['why']:
+            n,sz,t=recs[i]
+            print("%s\t%s\t%d\t%s\t%s"%(i,n,sz,why,' '.join(sorted(t))))
+        else: print(i)
+
 if __name__=='__main__':
     if len(sys.argv)>1 and sys.argv[1]=='scan': cmd_scan(sys.argv[2:])
     elif len(sys.argv)>1 and sys.argv[1]=='report': cmd_report(sys.argv[2:])
     elif len(sys.argv)>1 and sys.argv[1]=='paths': cmd_paths(sys.argv[2:])
     elif len(sys.argv)>1 and sys.argv[1]=='pack': cmd_pack(sys.argv[2:])
+    elif len(sys.argv)>1 and sys.argv[1]=='select': cmd_select(sys.argv[2:])
     else:
-        print("usage: pdfscan.py scan [options] DIR|FILE ...   |   pdfscan.py report LOG.jsonl[.gz] ...   |   pdfscan.py pack files.txt ids.txt out.tgz")
+        print("usage: pdfscan.py scan [options] DIR|FILE ...   |   pdfscan.py report LOG.jsonl[.gz] ...   |   pdfscan.py pack files.txt ids.txt out.tgz   |   pdfscan.py select [options] LOG.jsonl[.gz] ...")
         sys.exit(1)
