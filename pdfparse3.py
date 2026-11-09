@@ -1075,10 +1075,32 @@ def content_ops(d,maxops=1000000):
                     if type(ops[k])==bytes: dic[ops[k]]=ops[k+1]
                 q=p+1 if p<n and d[p] in WHITESPACE else p
                 L=dic.get(b'/L',dic.get(b'/Length'))
-                m=re.compile(rb'[\x00\t\n\x0c\r ]EI(?=[\x00\t\n\x0c\r ]|$)').search(d,q+(L if type(L)==int and L>0 else 0))
-                e=m.start() if m else n
+                size=L if type(L)==int and 0<=L<=n-q else None
+                # szuretlen kep: az adat merete a kep mereteibol (sor = szelesseg x komponens x bit, byte-ra kerekitve).
+                # A pixelek kozott is lehet " EI ": az elso ilyennel a kep idejekoran veget ert, a maradekbol hamis
+                # operatorok lettek.
+                par=lambda a,b: dic.get(a,dic.get(b))
+                filt=par(b'/F',b'/Filter')
+                if size is None and (filt is None or filt==[]):
+                    w,h,bpc,cs=par(b'/W',b'/Width'),par(b'/H',b'/Height'),par(b'/BPC',b'/BitsPerComponent'),par(b'/CS',b'/ColorSpace')
+                    if type(cs)==list and cs: cs=b'/I' if cs[0] in (b'/I',b'/Indexed') else None
+                    colors={b'/G':1,b'/DeviceGray':1,b'/I':1,b'/Indexed':1,b'/RGB':3,b'/DeviceRGB':3,b'/CMYK':4,b'/DeviceCMYK':4}.get(cs if type(cs)==bytes else None,0)
+                    bits=bpc if type(bpc)==int and bpc in (1,2,4,8,16) else 0
+                    if par(b'/IM',b'/ImageMask')==b'true': colors=bits=1
+                    if type(w)==int and type(h)==int and w>0 and h>0 and colors and bits and (w*colors*bits+7)//8*h<=n-q:
+                        size=(w*colors*bits+7)//8*h
+                m=None
+                e=after=n
+                if size is not None:
+                    # az ismert meret utan (whitespace-ek utan) all az EI: ott a kep vege (utana hatarolo jel is johet)
+                    x=q+size
+                    while x<n and d[x] in WHITESPACE: x+=1
+                    if x>q+size and d[x:x+2]==b'EI' and (x+2==n or d[x+2] in WHITESPACE or d[x+2] in b'()<>[]{}/%'): e,after=q+size,x+2
+                if e==n:
+                    m=re.compile(rb'[\x00\t\n\x0c\r ]EI(?=[\x00\t\n\x0c\r ]|$)').search(d,q+(L if type(L)==int and 0<L<=n-q else 0))
+                    if m: e,after=m.start(),m.end()
                 yield b'BI',[dic,d[q:e]]
-                p=m.end() if m else n
+                p=after
                 img=None
                 continue
             yield t,ops

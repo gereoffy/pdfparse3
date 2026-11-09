@@ -162,6 +162,16 @@ check('objs_tree nested',i==len(objs) and v[b'/A']==1 and v[b'/B'][1]==('R',2) a
 check('num',(P.num(b'14.4'),P.num(b'-.5'),P.num(7),P.num(b'x',-1))==(14.4,-0.5,7,-1))
 ops=list(P.content_ops(b'/Span <</MCID 3>> BDC (a(b)c) Tj BI /W 3 /L 3 ID EI  EI (unterminated\n1 0 0 RG\n'))
 check('content_ops BDC/nested string/inline image with /L/unterminated string',[op for op,a in ops]==[b'BDC',b'Tj',b'BI',b'RG'] and ops[0][1][1]=={b'/MCID':3} and pstr(ops[1][1][0])==b'a(b)c' and ops[2][1][1]==b'EI ' and pstr(ops[3][1][0])==b'unterminated' and ops[3][1][1:]==[1,0,0],str(ops))   # (a lezaratlan string a sor vegen zarul, es operandus lesz)
+# inline kep: a szuretlen kep vege a mereteibol (a pixelek kozti " EI " nem zarja le), szurt kepnel az EI keresese marad
+def bi(s):
+    with contextlib.redirect_stdout(io.StringIO()): return [(op,bytes(a[1]) if op==b'BI' else len(a)) for op,a in P.content_ops(s)]
+check('content_ops inline image: " EI " among the pixels of an unfiltered image',bi(b'BI /W 7 /H 1 /BPC 8 /CS /G ID x EI y! EI Q')==[(b'BI',b'x EI y!'),(b'Q',0)],str(bi(b'BI /W 7 /H 1 /BPC 8 /CS /G ID x EI y! EI Q')))
+check('content_ops inline image: one pixel after ID CR LF',bi(b'BI /W 1 /H 1 /BPC 8 /CS /G ID\r\n EI Q')==[(b'BI',b'\n'),(b'Q',0)],str(bi(b'BI /W 1 /H 1 /BPC 8 /CS /G ID\r\n EI Q')))
+check('content_ops inline image: filtered, "EI" followed by a delimiter is data',bi(b'BI /W 4 /H 1 /BPC 8 /CS /G /F /A85 ID A EI%A~> EI Q')==[(b'BI',b'A EI%A~>'),(b'Q',0)],str(bi(b'BI /W 4 /H 1 /BPC 8 /CS /G /F /A85 ID A EI%A~> EI Q')))
+check('content_ops inline image: RGB rows, image mask, a size that does not fit',
+      (bi(b'BI /W 2 /H 2 /BPC 8 /CS /RGB ID 0123 EI 6789 EI Q'),bi(b'BI /W 9 /H 2 /IM true ID a EI\nEI Q'),bi(b'BI /W 100 /H 100 /BPC 8 /CS /G ID ab EI Q'))==
+      ([(b'BI',b'0123 EI 6789'),(b'Q',0)],[(b'BI',b'a EI'),(b'Q',0)],[(b'BI',b'ab'),(b'Q',0)]),
+      str((bi(b'BI /W 2 /H 2 /BPC 8 /CS /RGB ID 0123 EI 6789 EI Q'),bi(b'BI /W 9 /H 2 /IM true ID a EI\nEI Q'),bi(b'BI /W 100 /H 100 /BPC 8 /CS /G ID ab EI Q'))))
 # 14: pdf2str robusztussag (ha a modul elerheto): rossz operandusok nem okozhatnak kivetelt, a tulcsordulo bfrange
 #     nem veszitheti el a CMap tobbi bejegyzeset
 try:
