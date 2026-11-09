@@ -299,3 +299,8 @@ def objstm_chain(n):
                         struct.pack('>BIH',1,x,0) if k==size-1 else struct.pack('>BIH',0,0,0) for k in range(size))
     return build_xs(objs,size-1,size,rows,b'/Root 1 0 R')
 write('15f_objstm_filter_chain_3000.pdf',objstm_chain(3000))
+
+# 16: /Length nelkuli, legfeljebb 3 byte-os stream (a nitropdf review-bol): az adat az endstream-ig tart. A 3 byte-os
+#     turest (kicsit rovid /Length) a /Length nelkuli stream is megkapta, igy az adata elveszett (ures stream lett).
+d,_,_=build(PAGEC+[(4,b'<<>>stream\nx\nendstream')])
+write('16a_stream_no_length_short.pdf',d)

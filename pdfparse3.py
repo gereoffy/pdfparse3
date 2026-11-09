@@ -881,9 +881,11 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
         # handle embedded stream:
         if data==b'stream':
             stream_len=0
+            haslen=False   # van /Length (szam vagy hivatkozas)
             try:
                 fi=objs.index(b'/Length')
                 stream_len=int(objs[fi+1])
+                haslen=True
                 if fi+3<len(objs) and objs[fi+3]==b'R': stream_len=-stream_len # referenced object
             except Exception:
                 pass
@@ -951,7 +953,9 @@ def parse_pdf_obj(d,p,pend,stop=None,err=print_err,lenref=None):
                         # az endstream-ig tarto resz a stream (kulonben a kovetkezo obj-ek is belekerulnenek)
                         err("STREAM: invalid length / /Length points beyond endstream %d/%d 0x%X-0x%X"%(stream_len,q-p,p,q))
                         stream_len=q-p
-                    if stream_len<(q-p)-3:
+                    # (/Length nelkul minden az endstream-ig a stream, a legfeljebb 3 byte-os is: a 3 byte turest csak
+                    # a kicsit rovid /Length kapja, nelkule a rovid adat elveszett)
+                    if stream_len<(q-p)-3 or not haslen:
                         if stream_len>0: err("STREAM: invalid length / too long! %d/%d 0x%X-0x%X"%(stream_len,q-p,p,q))
                         stream_len=q-p  # ha a stream_len nem jo, akkor az endstream poziciojat vesszuk figyelembe!
                     stream=PDFStream(d[p:p+stream_len],filt,parms)

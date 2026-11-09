@@ -217,6 +217,11 @@ t0=time.time()
 with contextlib.redirect_stdout(io.StringIO()): pdf=P.PDFParser(dd); pdf.parse()
 check('15g 20000 streams with a referenced /Filter: linear time',len(pdf.dom)==N and time.time()-t0<8,"%.1fs dom=%d"%(time.time()-t0,len(pdf.dom)))
 
+# 16: /Length nelkuli rovid stream: az adata megvan (a sorvegevel egyutt, mint a hosszabb, /Length nelkuli streameknel)
+pdf,out=run('16a_stream_no_length_short.pdf')
+with contextlib.redirect_stdout(io.StringIO()): st=pdf.get_obj(4)[1]
+check('16a short stream without /Length: its data kept',st is not None and bytes(st.data)==b'x\n' and pdf.pagecnt==1,repr(bytes(st.data)) if st is not None else 'no stream')
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))
