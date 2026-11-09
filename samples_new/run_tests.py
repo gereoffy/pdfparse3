@@ -232,6 +232,14 @@ pdf,out=run('16a_stream_no_length_short.pdf')
 with contextlib.redirect_stdout(io.StringIO()): st=pdf.get_obj(4)[1]
 check('16a short stream without /Length: its data kept',st is not None and bytes(st.data)==b'x\n' and pdf.pagecnt==1,repr(bytes(st.data)) if st is not None else 'no stream')
 
+# 17: /CFM /None crypt filter: a stream nincs titkositva, valtozatlanul adjuk (az 1-es obj tartalma "q Q\n")
+def stream1(name):
+    pdf,out=run(name)
+    with contextlib.redirect_stdout(io.StringIO()): top,st=pdf.get_obj(1)
+    return (bytes(st.decode()) if st is not None else None),pdf.errors,[l for l in out.splitlines() if l.startswith('CRYPT')]
+r=stream1('17a_crypt_cfm_none.pdf')
+check('17a /CFM /None: the stream as it is',r[0]==b'q Q\n' and r[1]==[],str(r))
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))

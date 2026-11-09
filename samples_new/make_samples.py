@@ -304,3 +304,7 @@ write('15f_objstm_filter_chain_3000.pdf',objstm_chain(3000))
 #     turest (kicsit rovid /Length) a /Length nelkuli stream is megkapta, igy az adata elveszett (ures stream lett).
 d,_,_=build(PAGEC+[(4,b'<<>>stream\nx\nendstream')])
 write('16a_stream_no_length_short.pdf',d)
+
+# 17, 18: crypt filter mintak a nitropdf review-bol (kesz file-ok, nem generaljuk ujra: a samples/encrypted_aes.pdf
+#     /Encrypt dict-jebol keszultek, az 1-es obj egy "q Q\n" tartalmu stream):
+#  17a: /StmF /StdCF, de a filter /CFM-je /None: a stream nincs titkositva (RC4-gyel "visszafejtve" szemet lett)

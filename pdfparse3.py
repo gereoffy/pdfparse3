@@ -1993,20 +1993,27 @@ class PDFParser():
         P=top.get(b'/P') if type(top.get(b'/P'))==int else 0
         L=top.get(b'/Length') if type(top.get(b'/Length'))==int else 40
         meta=top.get(b'/EncryptMetadata')!=b'false'
-        cfm=objs_value(objs,b'/CFM')
-        cfm=cfm[0] if type(cfm)==list and cfm else cfm
-        # (/StmF /StrF alapertelmezese a spec szerint /Identity: nincs titkositva)
-        method=lambda f: 'none' if f is None or f==b'/Identity' else 'aes' if cfm in (b'/AESV2',b'/AESV3') else 'rc4'
-        stm=method(top.get(b'/StmF')) if V>=4 else 'rc4'
-        strf=method(top.get(b'/StrF')) if V>=4 else 'rc4'
+        # V4+: a crypt filterek (/CF), mindegyik a sajat /CFM-jevel: /V2 RC4, /AESV2 es /AESV3 AES, /None (vagy ha nincs
+        # megadva: ez az alapertelmezes) nincs titkositva. Eddig az elso /CFM dontott, es ami nem AES volt, az RC4: a
+        # /CFM /None filterrel irt (titkositatlan) adatot RC4-gyel "visszafejtettuk", szemet lett belole.
+        # filters: nev -> (mod, kulcshossz byte-ban vagy None, AESV2-e)
+        tree=objs_tree(objs,3)[0] if len(objs)>3 else None
+        cf=self.refval(tree.get(b'/CF')) if type(tree)==dict else None
+        filters={}
+        for name,f in (cf.items() if type(cf)==dict else ()):
+            f=self.refval(f)
+            if type(f)!=dict or name==b'/Identity': continue
+            m,l=self.refval(f.get(b'/CFM')),self.refval(f.get(b'/Length'))
+            filters[name]=('aes' if m in (b'/AESV2',b'/AESV3') else 'none' if m in (None,b'/None') else 'rc4',
+                           (l if l<=32 else l//8) if type(l)==int and l>0 else None,m==b'/AESV2')
+        # (/StmF /StrF alapertelmezese a spec szerint /Identity: nincs titkositva; a /CF-ben nem szereplo nev is az)
+        used=[filters.get(top.get(k),('none',None,False)) for k in (b'/StmF',b'/StrF')] if V>=4 else []
+        stm=used[0][0] if V>=4 else 'rc4'
+        strf=used[1][0] if V>=4 else 'rc4'
         # V4: a kulcshossz a crypt filter /Length-e (byte-ban, egyes irok bitben), ha van; AESV2-nel mindig 16 byte
         # (a felso szintu /Length elmaradhat, az alapertelmezett 40 bit itt rossz lenne)
-        cfl=None
-        if V>=4 and b'/CFM' in objs:
-            i=objs.index(b'/CFM')
-            if b'/Length' in objs[i:i+8]:
-                v=objs[i+objs[i:i+8].index(b'/Length')+1]
-                if type(v)==int and v>0: cfl=v if v<=32 else v//8
+        cfl=next((u[1] for u in reversed(used) if u[1]),None)
+        aesv2=any(u[2] for u in used)
         if top.get(b'/Filter')!=b'/Standard' or not R:
             print("CRYPT: unsupported security handler %s R=%s, not decrypted"%(str(top.get(b'/Filter')),str(R)))
             return
@@ -2015,7 +2022,7 @@ class PDFParser():
         if R<=4:
             n=5 if R==2 else max(5,min(16,L//8 if L>=40 else L))   # (/Length bitben; egyes irok byte-ban adjak meg)
             if cfl: n=max(5,min(16,cfl))
-            if cfm==b'/AESV2': n=16
+            if aesv2: n=16
             if self.fileid is None:
                 print("CRYPT: missing /ID, not decrypted")
                 return
