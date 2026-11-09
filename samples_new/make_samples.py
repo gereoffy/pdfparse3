@@ -214,7 +214,7 @@ try:
 except ImportError:
     pass
 
-# 14: a pdf2str (szovegkinyeres) robusztussagi mintai (README 10.13):
+# 14: a pdf2str (szovegkinyeres) robusztussagi mintai (README 4.5):
 #  14a: a Tf operandusa nem nev, hanem tomb ("[1 2] 12 Tf"): a fonts.get(lista) TypeError-t dobott, a parse_pdf_text elszallt
 #  14b: a Do operandusa dict ("<</a 1>> Do"), es van /XObject eroforras: ugyanaz az xo.get-nel
 #  14c: /ToUnicode CMap, amelyben egy bfchar (<41> -> 'H') utan egy tulcsordulo bfrange all (<f0> <ff> <fa>: egybyte-os
