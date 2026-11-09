@@ -237,3 +237,65 @@ cmap=(b'/CIDInit /ProcSet findresource begin begincmap /CMapName /T def\n'
 d,_,_=build(TEXTPAGE(b'')+[(4,stream(b'<<>>',b'BT /F1 12 Tf (A) Tj ET')),
     (5,b'<</Type/Font/Subtype/Type1/BaseFont/Helvetica/ToUnicode 6 0 R>>'),(6,stream(b'<<>>',cmap))])
 write('14c_pdf2str_bfrange_overflow.pdf',d)
+
+# 15: a nitropdf (a pdfparse3 C++ atirata, jpeg-nitro) 2026-11-09-i review-janak memoriahiba-mintai. A pdfparse3-ban ezek
+#     nem hibak (nincs mely rekurzio, nincs kezi memoriakezeles): itt azt rogzitjuk, hogy kivetel es elakadas nelkul,
+#     a vart eredmennyel olvassa oket. A C++ valtozat javitas elott mindegyiken elszallt (ASan-nal latszik mind).
+#  15a: egy stream /Filter-e egy masik STREAM obj-ra hivatkozik (es az megint egy masikra...): a C++-ban a streamek
+#       vektora a decode() kozben nott, a hivatkozas felszabaditott memoriaba mutatott (use after free)
+#  15b: 100 000 egymasba agyazott tomb egy obj-ban; 15c: ugyanez egy content streamben (300 000 '['): a C++ ertek-
+#       olvasoja korlat nelkul rekurzalt (verem-tulcsordulas); a melysegkorlat (64) alatti resz null
+#  15d/15e: javito mod (az xref stream /Prev-je sehova sem mutat), egy stream /Length-e olyan obj-ra hivatkozik, amit az
+#       xref object stream tagjakent ad meg, a file-ban viszont kozvetlen obj (a katalogus): a C++-ban a scan kozben
+#       betoltott es cache-elt obj memoriajat a scan visszatekerte (15d: 70 KB-os string, a blokk felszabadult;
+#       15e: kicsi, a kovetkezo obj-ek felulirtak: a katalogus helyen szemet)
+#  15f: 3000 object stream, mindegyik /Filter-e a kovetkezoben levo obj-ra hivatkozik: a C++ betoltoje lancban
+#       rekurzalt (verem-tulcsordulas 512 KB-os szalvermen). A pdfparse3-ban a refval() itt negyzetes ideju volt
+#       (minden hivatkozasnal vegigment az obj_starts-on), l. run_tests 15f.
+import struct
+PAGEC=[(1,b'<</Type/Catalog/Pages 2 0 R>>'),(2,b'<</Type/Pages/Kids[3 0 R]/Count 1>>'),
+       (3,b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 50 50]/Contents 4 0 R>>')]
+d,_,_=build(PAGEC+[(4,stream(b'<</Filter 5 0 R>>',b'q Q\n'))]+
+            [(k,stream(b'<</Filter %d 0 R>>'%(k+1) if k<12 else b'<<>>',b'x')) for k in range(5,13)])
+write('15a_filter_ref_to_stream.pdf',d)
+d,_,_=build(PAGEC+[(4,stream(b'<<>>',b'q Q\n')),(5,b'['*100000+b']'*100000)])
+write('15b_nested_arrays_100000.pdf',d)
+d,_,_=build(PAGEC+[(4,stream(b'<<>>',b'['*300000+b' TJ\n'))])
+write('15c_nested_arrays_content.pdf',d)
+
+# xref stream-es file kezzel: objs [(oid, torzs)], az xref stream sajat oid-ja xo; rows(offs, x) adja a sorokat (W [1 4 2])
+def build_xs(objs,xo,size,rows,extra=b''):
+    d=b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n'
+    offs={}
+    for oid,body in objs:
+        offs[oid]=len(d)
+        d+=b'%d 0 obj\n'%oid+body+b'\nendobj\n'
+    x=len(d)
+    r=rows(offs,x)
+    d+=b'%d 0 obj\n'%xo+b'<</Type/XRef/Size %d/W[1 4 2]%s/Length %d>>\nstream\n'%(size,extra,len(r))+r+b'\nendstream\nendobj\n'
+    return d+b'startxref\n%d\n%%%%EOF\n'%x
+
+def scan_arena(big):
+    objs=[(5,b'<</Type/Catalog/Pages 2 0 R/Big('+b'A'*big+b')>>'),   # a file-ban kozvetlen obj; az xref szerint a #6 objstm tagja
+          (4,b'<</Length 5 0 R>>\nstream\nq Q\n\nendstream'),(2,PAGEC[1][1]),(3,PAGEC[2][1])]
+    objs+=[(k,b'<</Filler('+b'%04d'%k*40+b')/K[1 2 3 4 5 6 7 8]>>') for k in range(8,40)]
+    def rows(offs,x):
+        return b''.join(struct.pack('>BIH',2,6,0) if k==5 else struct.pack('>BIH',1,x,0) if k==7 else
+                        struct.pack('>BIH',1,offs[k],0) if k in offs else struct.pack('>BIH',0,0,65535 if k==0 else 0) for k in range(8))
+    return build_xs(objs,7,8,rows,b'/Root 5 0 R/Prev 99999999')
+write('15d_repair_length_ref_objstm_big.pdf',scan_arena(70000))
+write('15e_repair_length_ref_objstm_small.pdf',scan_arena(8))
+
+def objstm_chain(n):
+    objs=[(1,PAGEC[0][1]),(2,PAGEC[1][1]),(3,b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 50 50]>>')]
+    for k in range(n):   # a 10+k objstm tagja a 10+n+k obj ("null"); a /Filter-e a 10+n+k+1-re hivatkozik (a kovetkezoben)
+        head=b'%d 0 '%(10+n+k)
+        data=head+b'null'
+        filt=b'/Filter %d 0 R'%(10+n+k+1) if k+1<n else b''
+        objs.append((10+k,b'<</Type/ObjStm/N 1/First %d%s/Length %d>>\nstream\n'%(len(head),filt,len(data))+data+b'\nendstream'))
+    size=10+2*n+1
+    def rows(offs,x):
+        return b''.join(struct.pack('>BIH',1,offs[k],0) if k in offs else struct.pack('>BIH',2,k-n,0) if 10+n<=k<10+2*n else
+                        struct.pack('>BIH',1,x,0) if k==size-1 else struct.pack('>BIH',0,0,0) for k in range(size))
+    return build_xs(objs,size-1,size,rows,b'/Root 1 0 R')
+write('15f_objstm_filter_chain_3000.pdf',objstm_chain(3000))

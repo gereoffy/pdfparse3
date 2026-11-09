@@ -179,6 +179,29 @@ if pdf2str:
     for name,exp in (('13a_text_content_raw.pdf','HelloWorld'),('13b_text_content_flate.pdf','HelloWorld'),('13c_text_content_aes128.pdf','HelloWorld')):
         t=text_of(name); check(name[:3]+' pdf2str text',t==exp,repr(t))
 
+# 15: a nitropdf (C++ atirat) review-janak memoriahiba-mintai (l. make_samples.py): a pdfparse3 kivetel nelkul, a vart
+#     eredmennyel olvassa oket (a C++ valtozat javitas elott mindegyiken elszallt)
+pdf,out=run('15a_filter_ref_to_stream.pdf')
+with contextlib.redirect_stdout(io.StringIO()): top,st=pdf.get_obj(4)
+check('15a filter is a reference to a stream obj: read, no errors',pdf.errors==[] and pdf.pagecnt==1 and top.get(b'/Filter')==('R',5) and bytes(st.decode())==b'q Q\n',str((pdf.errors,top)))
+pdf,out=run('15b_nested_arrays_100000.pdf')
+with contextlib.redirect_stdout(io.StringIO()): v=pdf.get_obj(5)[0]
+depth=0
+while type(v)==list and v: v=v[0]; depth+=1
+check('15b 100000 nested arrays: no errors, null below depth 64',pdf.errors==[] and pdf.pagecnt==1 and depth==64 and v is None,"depth=%d %s"%(depth,str(pdf.errors)))
+pdf,out=run('15c_nested_arrays_content.pdf')
+with contextlib.redirect_stdout(io.StringIO()): ops=list(P.content_ops(bytes(pdf.get_obj(4)[1].decode())))
+check('15c 300000 nested arrays in a content stream: one operator',pdf.errors==[] and [(op,len(a)) for op,a in ops]==[(b'TJ',1)],str([(op,len(a)) for op,a in ops][:4]))
+for name,big in (('15d_repair_length_ref_objstm_big.pdf',70000),('15e_repair_length_ref_objstm_small.pdf',8)):
+    pdf,out=run(name)
+    with contextlib.redirect_stdout(io.StringIO()): cat=pdf.deref(('R',pdf.root)); st=pdf.get_obj(4)[1]
+    check(name[:3]+' /Length refers to an obj the xref puts into a missing object stream: the catalog intact',
+          type(cat)==dict and cat.get(b'/Type')==b'/Catalog' and cat.get(b'/Pages')==('R',2) and len(cat[b'/Big'].get())==big and pdf.pagecnt==1 and
+          st is not None and bytes(st.decode())==b'q Q\n\n',str(cat)[:80])
+    check(name[:3]+' errors: the bad /Prev and the missing object stream only',[m[:28] for m in msgs(pdf)]==['XREF: invalid /Prev offset: ','XREF: object stream #6 not f'],str(msgs(pdf)))
+pdf,out=run('15f_objstm_filter_chain_3000.pdf')
+check('15f chain of 3000 object streams: no errors, all objects',pdf.errors==[] and pdf.pagecnt==1 and len(pdf.dom)==3004 and len(pdf.xref_stm)==3000,"%s dom=%d stm=%d"%(str(pdf.errors),len(pdf.dom),len(pdf.xref_stm)))
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))
