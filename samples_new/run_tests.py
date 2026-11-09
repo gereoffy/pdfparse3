@@ -201,6 +201,12 @@ for name,big in (('15d_repair_length_ref_objstm_big.pdf',70000),('15e_repair_len
     check(name[:3]+' errors: the bad /Prev and the missing object stream only',[m[:28] for m in msgs(pdf)]==['XREF: invalid /Prev offset: ','XREF: object stream #6 not f'],str(msgs(pdf)))
 pdf,out=run('15f_objstm_filter_chain_3000.pdf')
 check('15f chain of 3000 object streams: no errors, all objects',pdf.errors==[] and pdf.pagecnt==1 and len(pdf.dom)==3004 and len(pdf.xref_stm)==3000,"%s dom=%d stm=%d"%(str(pdf.errors),len(pdf.dom),len(pdf.xref_stm)))
+# (a lanc elso tagjat kerve a get_obj lancban olvasta az object streameket: RecursionError; most 64 szint utan nincs obj,
+#  a tagok megvannak)
+try:
+    with contextlib.redirect_stdout(io.StringIO()): res=(pdf.get_obj(3010),pdf.get_obj(6009))
+except RecursionError as ex: res=repr(ex)
+check('15f get_obj through the chain: no RecursionError, the members read',res==((b'null',None),(b'null',None)),str(res)[:80])
 
 # 15g: sok stream, mindegyik /Filter-e egy nem letezo obj-ra hivatkozik: a refval minden hivatkozasnal vegigment az
 #     obj_starts-on (negyzetes ido: 20 000 streamnel 10+ s), most egy index adja az obj utolso fejlecet

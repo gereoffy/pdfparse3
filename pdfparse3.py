@@ -1103,6 +1103,7 @@ class PDFParser():
         self.crypt=None     # visszafejtes (ures felhasznaloi jelszoval): {'key','n','stm','str','metadata'}, l. setup_crypt
         self.fileid=None    # a trailer /ID elso eleme (a kulcs szamitasahoz)
         self.objcache={}    # get_obj: oid -> (ertek, stream)
+        self._loading=0     # get_obj: az eppen (egymasba agyazva) olvasott obj-ek szama
         self.root=None      # a (legfrissebb) trailer /Root obj-e
         self.catalog=None   # az utolso /Type /Catalog obj (ha nincs hasznalhato trailer)
         self.stmcache={}    # get_obj: objstm oid -> {oid: tokenlista}
@@ -2298,21 +2299,28 @@ class PDFParser():
     # levo obj (a dom szerinti, utolso valtozat), vagy egy object stream tagja. Nem talalt obj: (None, None).
     def get_obj(self,oid):
         if oid in self.objcache: return self.objcache[oid]
+        # egymasba agyazott olvasas: object stream, aminek a /Filter-e egy masik object streamben levo obj-ra hivatkozik,
+        # es igy tovabb. Ezres lancnal RecursionError lett; 64 szint utan nincs obj (nem cache-elve: felulrol kerve megvan)
+        if self._loading>=64: return (None,None)
         self.objcache[oid]=(None,None)   # (korkoros hivatkozas ellen)
         r=(None,None)
-        if oid in self.dom:
-            objp,end=self.dom[oid]
-            q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',err=lambda m: None,lenref=self.resolve_length)
-            if self.crypt and oid!=self.encrypt: self.decrypt_obj(oid,objs,stream)
-            if len(objs)>3 and objs[2]==b'obj': r=(objs_tree(objs,3)[0],stream)
-            if stream is not None: resolve_filter(stream,r[0],self.deref)
-        else:
-            stm=self.xref_stm.get(oid,(None,))[0]
-            if stm is None:
-                stm=next((x for x,ids in self.objstm.items() if oid in ids),None)
-            if stm is not None:
-                toks=self.objstm_members(stm).get(oid)
-                if toks: r=(objs_tree(toks,0)[0],None)
+        self._loading+=1
+        try:
+            if oid in self.dom:
+                objp,end=self.dom[oid]
+                q,objs,stream=parse_pdf_obj(self.d,objp,end,stop=b'endobj',err=lambda m: None,lenref=self.resolve_length)
+                if self.crypt and oid!=self.encrypt: self.decrypt_obj(oid,objs,stream)
+                if len(objs)>3 and objs[2]==b'obj': r=(objs_tree(objs,3)[0],stream)
+                if stream is not None: resolve_filter(stream,r[0],self.deref)
+            else:
+                stm=self.xref_stm.get(oid,(None,))[0]
+                if stm is None:
+                    stm=next((x for x,ids in self.objstm.items() if oid in ids),None)
+                if stm is not None:
+                    toks=self.objstm_members(stm).get(oid)
+                    if toks: r=(objs_tree(toks,0)[0],None)
+        finally:
+            self._loading-=1
         self.objcache[oid]=r
         return r
 
