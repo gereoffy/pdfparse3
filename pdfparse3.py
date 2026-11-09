@@ -2014,6 +2014,12 @@ class PDFParser():
         # (a felso szintu /Length elmaradhat, az alapertelmezett 40 bit itt rossz lenne)
         cfl=next((u[1] for u in reversed(used) if u[1]),None)
         aesv2=any(u[2] for u in used)
+        # /StmF es /StrF is /Identity: titkositva csak az lehet, ami a sajat /Crypt filterevel ker egy crypt filtert
+        # (l. crypt_filter), a kulcshossz ilyenkor azoke
+        if V==4 and stm=='none' and strf=='none':
+            own=[f for f in filters.values() if f[0]!='none']
+            cfl=next((u[1] for u in reversed(own) if u[1]),cfl)
+            aesv2=aesv2 or any(u[2] for u in own)
         if top.get(b'/Filter')!=b'/Standard' or not R:
             print("CRYPT: unsupported security handler %s R=%s, not decrypted"%(str(top.get(b'/Filter')),str(R)))
             return
@@ -2047,11 +2053,12 @@ class PDFParser():
             print("CRYPT: %s, user password needed: strings and streams are not decrypted"%(desc))
             return
         print("CRYPT: %s, empty user password: decrypting"%(desc))
-        self.crypt={'key':key,'n':n,'R':R,'stm':stm,'str':strf,'metadata':meta}
+        self.crypt={'key':key,'n':n,'R':R,'stm':stm,'str':strf,'metadata':meta,'filters':{name:f[0] for name,f in filters.items()}}
 
-    def decrypt(self,oid,gen,data,kind):
+    # method: a 'stm' / 'str' alapertelmezes helyett ('none', 'rc4', 'aes': a stream sajat /Crypt filtere)
+    def decrypt(self,oid,gen,data,kind,method=None):
         c=self.crypt
-        m=c[kind]
+        m=method or c[kind]
         if m=='none': return data
         if c['R']>=5: k=c['key']
         else:
@@ -2073,8 +2080,26 @@ class PDFParser():
         for i,t in enumerate(objs):
             if type(t)==PDFString and not (sig and objs[i-1]==b'/Contents'):
                 t.data=bytearray(self.decrypt(oid,gen,t.data,'str'))
-        if stream and not (top.get(b'/Type')==b'/Metadata' and not self.crypt['metadata']) and not b'/Crypt' in objs:
-            stream.data=self.decrypt(oid,gen,stream.data,'stm')
+        if stream and not (top.get(b'/Type')==b'/Metadata' and not self.crypt['metadata']):
+            stream.data=self.decrypt(oid,gen,stream.data,'stm',self.crypt_filter(objs) if b'/Crypt' in objs else None)
+
+    # A stream sajat /Crypt filtere (/Filter /Crypt, a /DecodeParms /Name-je a crypt filter neve a /CF-bol): a modja
+    # ('none': /Identity, nincs nev, vagy nincs ilyen filter; 'rc4'; 'aes'), vagy None, ha a streamnek nincs /Crypt
+    # filtere (akkor a /StmF szerinti). Eddig az ilyen streamet (sot minden obj-et, amiben barhol /Crypt nev allt)
+    # visszafejtes nelkul hagytuk: /StmF /Identity mellett a nevvel kert filterrel titkositott tartalom rejtve maradt.
+    def crypt_filter(self,objs):
+        t=objs_tree(objs,3)[0] if len(objs)>3 else None
+        if type(t)!=dict: return None
+        f=self.refval(t.get(b'/Filter'))
+        dp=self.refval(t.get(b'/DecodeParms',t.get(b'/DP')))
+        if type(f)==list:
+            f=[self.refval(x) for x in f]
+            if not b'/Crypt' in f: return None
+            i=f.index(b'/Crypt')
+            dp=self.refval(dp[i]) if type(dp)==list and i<len(dp) else dp if type(dp)==dict and len(f)==1 else None
+        elif f!=b'/Crypt': return None
+        name=self.refval(dp.get(b'/Name')) if type(dp)==dict else None
+        return self.crypt['filters'].get(name,'none')
 
     # csonka file (felbeszakadt letoltes / masolas): a vege nullakkal van kitoltve, vagy az utolso %%EOF utan
     # meg obj-ek vannak (pl. linearizalt file-nal csak az elso oldal szekcioja teljes)

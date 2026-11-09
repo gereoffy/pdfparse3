@@ -240,6 +240,27 @@ def stream1(name):
 r=stream1('17a_crypt_cfm_none.pdf')
 check('17a /CFM /None: the stream as it is',r[0]==b'q Q\n' and r[1]==[],str(r))
 
+# 18: a stream sajat /Crypt filtere nevvel ker egy crypt filtert (/StmF, /StrF: /Identity): azzal fejtjuk vissza
+for name in ('18a_crypt_filter_aes.pdf','18b_crypt_filter_aes_cf_length_only.pdf','18c_crypt_filter_aes_custom_name.pdf','18d_crypt_filter_aes_length_bits.pdf',
+             '18e_crypt_filter_aes_no_stream_length.pdf','18f_crypt_filter_rc4_128.pdf','18g_crypt_filter_rc4_40.pdf','18h_crypt_filter_rc4_default40.pdf'):
+    r=stream1(name)
+    check(name[:3]+' explicit /Crypt filter: decrypted',r[0]==b'q Q\n' and any('empty user password: decrypting' in l for l in r[2]),str(r))
+# a /Crypt nev mashol all a stream dict-jeben (nem filter): a stream a /StmF szerint titkositott, vissza kell fejteni
+# (eddig az obj-ben barhol allo /Crypt nev miatt kimaradt); /Crypt filter /Identity nevvel vagy nev nelkul: valtozatlan
+pdf=P.PDFParser(b'')
+pdf.crypt={'key':b'k'*16,'n':16,'R':4,'stm':'rc4','str':'rc4','metadata':True,'filters':{b'/StdCF':'rc4'}}
+def dec(dct):
+    src=b'1 0 obj '+dct+b' stream\nABCD\nendstream endobj'
+    q,objs,st=P.parse_pdf_obj(src,0,len(src),stop=b'endobj',err=lambda m,n=1:None)
+    pdf.decrypt_obj(1,objs,st)
+    return bytes(st.data)
+enc=dec(b'<</Length 4>>')
+check('/Crypt as a value elsewhere in the dict: decrypted as /StmF says',enc!=b'ABCD' and dec(b'<</X /Crypt /Length 4>>')==enc,str(dec(b'<</X /Crypt /Length 4>>')))
+check('/Crypt filter: /Identity, no name, an unknown name: as it is; a named one: with that filter',
+      (dec(b'<</Filter /Crypt /DecodeParms <</Name /Identity>> /Length 4>>'),dec(b'<</Filter /Crypt /Length 4>>'),dec(b'<</Filter [/Crypt] /DecodeParms [<</Name /Nope>>] /Length 4>>'),
+       dec(b'<</Filter [/Crypt /FlateDecode] /DecodeParms [<</Name /StdCF>> null] /Length 4>>'))==(b'ABCD',b'ABCD',b'ABCD',enc),
+      str(dec(b'<</Filter [/Crypt /FlateDecode] /DecodeParms [<</Name /StdCF>> null] /Length 4>>')))
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))

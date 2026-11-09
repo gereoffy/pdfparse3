@@ -308,3 +308,7 @@ write('16a_stream_no_length_short.pdf',d)
 # 17, 18: crypt filter mintak a nitropdf review-bol (kesz file-ok, nem generaljuk ujra: a samples/encrypted_aes.pdf
 #     /Encrypt dict-jebol keszultek, az 1-es obj egy "q Q\n" tartalmu stream):
 #  17a: /StmF /StdCF, de a filter /CFM-je /None: a stream nincs titkositva (RC4-gyel "visszafejtve" szemet lett)
+#  18a-18h: /StmF es /StrF /Identity, a stream sajat /Crypt filtere kert nevvel egy crypt filtert (/DecodeParms /Name):
+#       a: AESV2; b: a kulcshossz csak a filter /Length-eben (a felso szintu hianyzik); c: nem /StdCF nevu filter;
+#       d: a filter /Length-e bitben; e: a streamnek nincs /Length-e; f, g, h: RC4 (V2) 128 es 40 bites kulccsal, ill.
+#       /Length nelkul (40 bit). Eddig ezeket visszafejtes nelkul hagytuk.
