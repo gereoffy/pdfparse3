@@ -1111,6 +1111,7 @@ class PDFParser():
         self.xref_stream_oids=set() # az xref streamek obj szamai
         self.xref_zero=set() # 0 offsetu "n" bejegyzesek (hasznalaton kivuli obj szamok, pl. macOS Quartz)
         self._starts=None   # a file-ban talalhato "N G obj" poziciok (obj_starts)
+        self._last=None     # obj szam -> az utolso fejlecenek pozicioja (last_start)
         self.base=0         # az offsetek ehhez kepest ertendok (szemet a header elott)
         self.truncated=False
         self.deep_header=False  # a %PDF header az elso 1024 byte-on tul van
@@ -1743,9 +1744,7 @@ class PDFParser():
         if not (type(v)==tuple and len(v)==2 and v[0]=='R') or depth>8: return v
         x=self.xref.get(v[1])
         pos=x[0] if x and type(x[0])==int and re_objstart.match(self.d,x[0]) else None
-        if pos is None:
-            st=[p for (o,g),ps in self.obj_starts().items() if o==v[1] for p in ps]
-            pos=max(st) if st else None
+        if pos is None: pos=self.last_start(v[1])
         if pos is None: return None
         q,objs,s=parse_pdf_obj(self.d,pos,len(self.d),stop=b'endobj',err=lambda m: None,lenref=self.resolve_length)
         if len(objs)<=3 or objs[2]!=b'obj': return None
@@ -1757,6 +1756,16 @@ class PDFParser():
             for mo in re_objstart.finditer(self.d):
                 self._starts.setdefault((int(mo.group(1)),int(mo.group(2))),[]).append(mo.start())
         return self._starts
+
+    # egy obj szam utolso fejlecenek pozicioja a file-ban (barmelyik generacio), vagy None. Egyszer epul fel: a refval
+    # eddig minden hivatkozasnal vegigment az obj_starts-on, ami sok hivatkozott /Filter-nel negyzetes ido volt
+    # (30 000 ilyen stream, 3.7 MB-os file: 25 s).
+    def last_start(self,oid):
+        if self._last==None:
+            self._last={}
+            for (o,g),ps in self.obj_starts().items():
+                if ps[-1]>self._last.get(o,-1): self._last[o]=ps[-1]
+        return self._last.get(oid)
 
     # "0000000000 00000 n" bejegyzesek: sok iro program (foleg a macOS Quartz) a hasznalaton kivuli obj szamokat
     # "f" helyett igy irja be. A nem letezo obj-re mutato hivatkozas null (spec), az olvasok is igy kezelik,

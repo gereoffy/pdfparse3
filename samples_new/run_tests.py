@@ -202,6 +202,15 @@ for name,big in (('15d_repair_length_ref_objstm_big.pdf',70000),('15e_repair_len
 pdf,out=run('15f_objstm_filter_chain_3000.pdf')
 check('15f chain of 3000 object streams: no errors, all objects',pdf.errors==[] and pdf.pagecnt==1 and len(pdf.dom)==3004 and len(pdf.xref_stm)==3000,"%s dom=%d stm=%d"%(str(pdf.errors),len(pdf.dom),len(pdf.xref_stm)))
 
+# 15g: sok stream, mindegyik /Filter-e egy nem letezo obj-ra hivatkozik: a refval minden hivatkozasnal vegigment az
+#     obj_starts-on (negyzetes ido: 20 000 streamnel 10+ s), most egy index adja az obj utolso fejlecet
+import time
+N=20000
+dd=b'%PDF-1.4\n'+b''.join(b'%d 0 obj\n<</Filter 99999 0 R/Length 1>>stream\nx\nendstream\nendobj\n'%k for k in range(1,N+1))+b'trailer\n<</Size %d>>\n'%(N+1)
+t0=time.time()
+with contextlib.redirect_stdout(io.StringIO()): pdf=P.PDFParser(dd); pdf.parse()
+check('15g 20000 streams with a referenced /Filter: linear time',len(pdf.dom)==N and time.time()-t0<8,"%.1fs dom=%d"%(time.time()-t0,len(pdf.dom)))
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))
