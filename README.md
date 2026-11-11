@@ -540,9 +540,10 @@ A `samples_new/` könyvtár a 10. fejezet javításainak, a titkosításnak, az 
 | `17a_crypt_cfm_none.pdf` | `/StmF /StdCF`, a filter `/CFM`-je `/None` (10.15): a stream változatlan (`q Q`) |
 | `18a`–`18h_crypt_filter_*.pdf` | `/StmF`, `/StrF` `/Identity`, a stream saját `/Crypt` filtere névvel kér crypt filtert (10.16): AESV2, a kulcshossz csak a filterben, nem `/StdCF` nevű filter, bitben adott `/Length`, `/Length` nélküli stream, RC4 128 és 40 bit, RC4 `/Length` nélkül; mind visszafejtve (`q Q`) |
 | `19a_hybrid_xrefstm_hidden_object.pdf`, `19b_hybrid_xrefstm_newer_revision.pdf` | hibrid xref: a 3-as obj egy object streamben van, az xref táblában szabad (`f`), a tábla `/XRefStm`-je adja meg. 19a: a rejtett obj megvan; 19b: egy újabb szekció (incremental update) felülírja. (A C++ átirat hibája volt, 13. fejezet; a Python mindig jól olvasta) |
+| `20a_rotate_beyond_int.pdf`, `20b_xrefstm_index_beyond_int.pdf`, `20c_encrypt_v_beyond_int.pdf` | egésznél nagyobb szám (41 jegy) ott, ahol egész kell: a lap `/Rotate`-je, az xref stream `/Index`-e, az `/Encrypt` `/V`, `/R`, `/P` értéke. A Python gond nélkül olvassa; a C++ átiratban az átalakítás definiálatlan volt (13. fejezet) |
 
 - `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül. A titkosított minták (12a–12g) pypdf-fel készülnek, és csak akkor, ha hiányoznak (véletlen IV és só miatt nem determinisztikusak); pypdf nélkül a meglévő fájlok maradnak. A 17a és a 18a–18h kész fájlok (a nitropdf átnézéséből, a `samples/encrypted_aes.pdf` `/Encrypt` szótárából készültek), ezeket (és a 19a, 19b fájlokat) nem generálja újra.
-- `run_tests.py` – lefuttatja a mintákat (a fenti két `samples/`-beli fájlt, az `uri_js.pdf`-et és a `tnef_container.pdf`-et is) és a hozzájuk tartozó elvárásokat, valamint egységteszteket (lexer token a buffer végén, `counts_upto`, `rfind_xref`, `objs_tree`, `num`, `content_ops` az inline képekkel, a `/Crypt` szűrő kezelése, a `refval` ideje), és ha a `pdf2str` importálható, annak szövegét a 13-as és 14-es mintákon. Ha a `pdfdump` le van fordítva (`make`), a 15–19-es mintákat a C++ átiraton is ellenőrzi (13. fejezet). Jelenleg 105 ellenőrzés, a C++-éival 126. Kilépési kód 0, ha minden rendben; `-v` kapcsolóval a sikeres ellenőrzéseket is kiírja.
+- `run_tests.py` – lefuttatja a mintákat (a fenti két `samples/`-beli fájlt, az `uri_js.pdf`-et és a `tnef_container.pdf`-et is) és a hozzájuk tartozó elvárásokat, valamint egységteszteket (lexer token a buffer végén, `counts_upto`, `rfind_xref`, `objs_tree`, `num`, `content_ops` az inline képekkel, a `/Crypt` szűrő kezelése, a `refval` ideje), és ha a `pdf2str` importálható, annak szövegét a 13-as és 14-es mintákon. Ha a `pdfdump` le van fordítva (`make`), a 15–20-as mintákat a C++ átiraton is ellenőrzi (13. fejezet). Jelenleg 108 ellenőrzés, a C++-éival 132 (ha a `pdfdump-asan` is le van fordítva, `make asan`, a 20-as mintákat a sanitizerek alatt is futtatja: 135). Kilépési kód 0, ha minden rendben; `-v` kapcsolóval a sikeres ellenőrzéseket is kiírja.
 
 ```bash
 python3 samples_new/run_tests.py -v
@@ -589,7 +590,7 @@ make test       # samples_new/run_tests.py, a C++ ellenőrzésekkel együtt
 
 A `pdfdump.py` a Python változat képét írja ki ugyanabban a formátumban, a `pdfcompare.py` fájlonként összeveti a kettőt (hiányzó obj-ek, eltérő értékek és streamek, az oldalak operátorszáma). A két változat a repó 118 mintájából 116-on azonos eredményt ad; a két ismert eltérés szándékos: a `nullrun_values.pdf`-ben a Python a hosszú `null` sorozatot átugorja (4. fejezet), a C++ megtartja, a `xrefstm_corrupt.pdf`-ben pedig a C++ javító módja megtalálja azt az oldal-objektumot, amit a Python nullnak ad.
 
-**A C++ átirat saját hibái** (mind javítva, a commitjaik `nitropdf:` kezdetűek; a minták a `samples_new/` 15–19-es fájljai, a `run_tests.py` `cpp` ellenőrzései):
+**A C++ átirat saját hibái** (mind javítva, a commitjaik `nitropdf:` kezdetűek; a minták a `samples_new/` 15–20-as fájljai, a `run_tests.py` `cpp` ellenőrzései):
 
 | Hiba | Minta |
 |---|---|
@@ -598,6 +599,7 @@ A `pdfdump.py` a Python változat képét írja ki ugyanabban a formátumban, a 
 | a javító mód visszatekerte az arénát, amibe közben egy objektum gyorsítótárazva lett | `15d`, `15e` |
 | object streamek láncán a betöltés korlát nélkül rekurzált | `15f` |
 | hibrid xref: a tábla szabad bejegyzése elrejtette az `/XRefStm` szerinti objektumot | `19a`, `19b` |
+| a fájl számai sima casttal lettek egészek: az egésznél nagyobb értéknél ez definiálatlan, és x86-on mást ad, mint ARM-on (egy 41 jegyű `/Rotate` 270, illetve 90 fok). Most `toInt`: a típus határán megáll, mindenhol 90 | `20a`–`20c` |
 
 A többi javítása (`/Length` nélküli rövid stream, inline kép, crypt filterek) a Python változatban is megvolt hibaként, azok a 10.13–10.16 pontban szerepelnek. Új hibánál mindkét változatot érdemes megnézni, és a mintát a `samples_new/`-ba tenni: a `run_tests.py` mindkettőn lefuttatja.
 
