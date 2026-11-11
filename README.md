@@ -1,6 +1,10 @@
 # pdfparse3.py – működési dokumentáció
 
-*Készült: 2026-09-24, a `pdfparse3.py` eredeti (1610 soros, `d993039`) változatának átnézése alapján; azóta a javításokkal és az új modulokkal (titkosítás, objektum-elérés, `pdf2str`, `pdfscan`) együtt karbantartva, utoljára 2026-10-15-én. A kódra függvénynévvel hivatkozik (`grep -n "def név" pdfparse3.py`), sorszámmal csak a 10.1–10.7 pontok, az **eredeti** változatra.*
+A repóban a PDF parser **két változata** van, a teszteszközeikkel:
+
+- **`pdfparse3.py`** (Python 3.8+ / pypy3): a teljes elemző, vagyis tartalomkinyerés, validálás és (a `pdf2str.py`-vel) szövegkinyerés. Erről szól az 1–12. fejezet. A kód a korábbi `pdfparse2.py` és `testpdf.py` összevonása, továbbfejlesztése.
+- **`pdfparse3.cpp`** (C++17): a pdfparse3.py objektum-réteg parser C++ átirata, ugyanazzal a hibatűréssel, de hiba-pontozás és tartalomszűrés nélkül. Lásd a [13. fejezetet](#13-c-átirat-pdfparse3cpp).
+- **Teszteszközök:** a `samples_new/run_tests.py` mindkét változatot ellenőrzi a mintákon (11. fejezet); a `pdfdump` (C++) és a `pdfdump.py` (Python) ugyanabban a formátumban írja ki, mit olvasott egy PDF-ből, a `pdfcompare.py` pedig összeveti a kettőt (13. fejezet, `Makefile`).
 
 ## 1. Cél és áttekintés
 
@@ -10,9 +14,7 @@ A `pdfparse3.py` egy **megengedő PDF-elemző**, amelyre három feladat épül:
 2. **Konzisztencia-ellenőrzés** (validálás): a szintaktikai, tömörítési és kereszthivatkozási (xref) hibák felderítése, és a **sérülés** (csonka fájl, adatvesztés, sorvége-konverzió, sérült tömörített adat) megkülönböztetése az író programok ártalmatlan szabálytalanságaitól, egy kalibrált pontszámmal (2.4–2.5).
 3. **Szövegkinyerés** (`pdf2str.py`, 4.5): az első oldal(ak) szövege, pl. szöveg alapú spamszűréshez, a parser objektum-elérésére (4.4) építve.
 
-A parser nem PDF-megjelenítő: fontokat, képeket nem rajzol, az oldalak tartalmát csak a szövegkinyerés olvassa. Ami érdekli, az a fájl szerkezete és a benne rejtett aktív tartalom. Az alapelv: *amit csak tud, feldolgoz; a hibákat nem kivételként dobja, hanem megszámolja*. Ezért a hibás, csonka, sérült fájlokon is végigfut, és lehetőleg egyetlen, jól megnevezett hibát ad egy jelenségre (nem százat egy rossz xref-tábla minden sorára).
-
-A repó részei: `pdfparse3.py` (a parser, külső függőség nélkül, Python 3.8+ és pypy3), `pdfparse3.cpp` (az objektum-réteg C++ átirata megjelenítőhöz, 13. fejezet), `pdf2str.py` (szövegkinyerés), `pdfscan.py` (tömeges vizsgálat, 12. fejezet), `samples/` (szintetikus minták a generátorukkal és tesztjeikkel) és `samples_new/` (a 10. fejezet javításainak és az új moduloknak a regressziós tesztjei; 11. fejezet). A kód a korábbi `pdfparse2.py` és `testpdf.py` összevonása. A megjegyzések magyar nyelvűek, ékezet nélkül.
+Ez a parser nem PDF-megjelenítő: fontokat, képeket nem rajzol, az oldalak tartalmát csak a szövegkinyerés olvassa. Ami érdekli, az a fájl szerkezete és a benne rejtett aktív tartalom. Az alapelv: *amit csak tud, feldolgoz; a hibákat nem kivételként dobja, hanem megszámolja*. Ezért a hibás, csonka, sérült fájlokon is végigfut, és lehetőleg egyetlen, jól megnevezett hibát ad egy jelenségre (nem százat egy rossz xref-tábla minden sorára).
 
 ## 2. Használat
 
