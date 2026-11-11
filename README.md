@@ -12,7 +12,7 @@ A `pdfparse3.py` egy **megengedő PDF-elemző**, amelyre három feladat épül:
 
 A parser nem PDF-megjelenítő: fontokat, képeket nem rajzol, az oldalak tartalmát csak a szövegkinyerés olvassa. Ami érdekli, az a fájl szerkezete és a benne rejtett aktív tartalom. Az alapelv: *amit csak tud, feldolgoz; a hibákat nem kivételként dobja, hanem megszámolja*. Ezért a hibás, csonka, sérült fájlokon is végigfut, és lehetőleg egyetlen, jól megnevezett hibát ad egy jelenségre (nem százat egy rossz xref-tábla minden sorára).
 
-A repó részei: `pdfparse3.py` (a parser, külső függőség nélkül, Python 3.8+ és pypy3), `pdf2str.py` (szövegkinyerés), `pdfscan.py` (tömeges vizsgálat, 12. fejezet), `samples/` (szintetikus minták a generátorukkal és tesztjeikkel) és `samples_new/` (a 10. fejezet javításainak és az új moduloknak a regressziós tesztjei; 11. fejezet). A kód a korábbi `pdfparse2.py` és `testpdf.py` összevonása. A megjegyzések magyar nyelvűek, ékezet nélkül.
+A repó részei: `pdfparse3.py` (a parser, külső függőség nélkül, Python 3.8+ és pypy3), `pdfparse3.cpp` (az objektum-réteg C++ átirata megjelenítőhöz, 13. fejezet), `pdf2str.py` (szövegkinyerés), `pdfscan.py` (tömeges vizsgálat, 12. fejezet), `samples/` (szintetikus minták a generátorukkal és tesztjeikkel) és `samples_new/` (a 10. fejezet javításainak és az új moduloknak a regressziós tesztjei; 11. fejezet). A kód a korábbi `pdfparse2.py` és `testpdf.py` összevonása. A megjegyzések magyar nyelvűek, ékezet nélkül.
 
 ## 2. Használat
 
@@ -537,9 +537,10 @@ A `samples_new/` könyvtár a 10. fejezet javításainak, a titkosításnak, az 
 | `16a_stream_no_length_short.pdf` | `/Length` nélküli, 1 byte-os stream (10.13): az adata megvan |
 | `17a_crypt_cfm_none.pdf` | `/StmF /StdCF`, a filter `/CFM`-je `/None` (10.15): a stream változatlan (`q Q`) |
 | `18a`–`18h_crypt_filter_*.pdf` | `/StmF`, `/StrF` `/Identity`, a stream saját `/Crypt` filtere névvel kér crypt filtert (10.16): AESV2, a kulcshossz csak a filterben, nem `/StdCF` nevű filter, bitben adott `/Length`, `/Length` nélküli stream, RC4 128 és 40 bit, RC4 `/Length` nélkül; mind visszafejtve (`q Q`) |
+| `19a_hybrid_xrefstm_hidden_object.pdf`, `19b_hybrid_xrefstm_newer_revision.pdf` | hibrid xref: a 3-as obj egy object streamben van, az xref táblában szabad (`f`), a tábla `/XRefStm`-je adja meg. 19a: a rejtett obj megvan; 19b: egy újabb szekció (incremental update) felülírja. (A C++ átirat hibája volt, 13. fejezet; a Python mindig jól olvasta) |
 
-- `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül. A titkosított minták (12a–12g) pypdf-fel készülnek, és csak akkor, ha hiányoznak (véletlen IV és só miatt nem determinisztikusak); pypdf nélkül a meglévő fájlok maradnak. A 17a és a 18a–18h kész fájlok (a nitropdf átnézéséből, a `samples/encrypted_aes.pdf` `/Encrypt` szótárából készültek), ezeket nem generálja újra.
-- `run_tests.py` – lefuttatja a mintákat (a fenti két `samples/`-beli fájlt, az `uri_js.pdf`-et és a `tnef_container.pdf`-et is) és a hozzájuk tartozó elvárásokat, valamint egységteszteket (lexer token a buffer végén, `counts_upto`, `rfind_xref`, `objs_tree`, `num`, `content_ops` az inline képekkel, a `/Crypt` szűrő kezelése, a `refval` ideje), és ha a `pdf2str` importálható, annak szövegét a 13-as és 14-es mintákon. Jelenleg 103 ellenőrzés. Kilépési kód 0, ha minden rendben; `-v` kapcsolóval a sikeres ellenőrzéseket is kiírja.
+- `make_samples.py` – a fájlok determinisztikus (újra)generálása, helyes xref-táblával (van benne egy kis LZW-kódoló is); új minta ide kerül. A titkosított minták (12a–12g) pypdf-fel készülnek, és csak akkor, ha hiányoznak (véletlen IV és só miatt nem determinisztikusak); pypdf nélkül a meglévő fájlok maradnak. A 17a és a 18a–18h kész fájlok (a nitropdf átnézéséből, a `samples/encrypted_aes.pdf` `/Encrypt` szótárából készültek), ezeket (és a 19a, 19b fájlokat) nem generálja újra.
+- `run_tests.py` – lefuttatja a mintákat (a fenti két `samples/`-beli fájlt, az `uri_js.pdf`-et és a `tnef_container.pdf`-et is) és a hozzájuk tartozó elvárásokat, valamint egységteszteket (lexer token a buffer végén, `counts_upto`, `rfind_xref`, `objs_tree`, `num`, `content_ops` az inline képekkel, a `/Crypt` szűrő kezelése, a `refval` ideje), és ha a `pdf2str` importálható, annak szövegét a 13-as és 14-es mintákon. Ha a `pdfdump` le van fordítva (`make`), a 15–19-es mintákat a C++ átiraton is ellenőrzi (13. fejezet). Jelenleg 105 ellenőrzés, a C++-éival 126. Kilépési kód 0, ha minden rendben; `-v` kapcsolóval a sikeres ellenőrzéseket is kiírja.
 
 ```bash
 python3 samples_new/run_tests.py -v
@@ -563,3 +564,38 @@ pdfscan.py paths [-0] files.txt ids.txt
 - `report`: összesítés: státuszok, osztályok módonként (0 = hibátlan, 1–9 = figyelmeztetés, ≥10 = sérült, a `score()` szerint), a sérült fájlok a fő diagnózis szerint, a diagnózisok súly szerint, hibatípusok, leglassabb fájlok és kategóriánként példa-azonosítók. `--list KATEGORIA` (vagy `DAMAGED` / `WARNING`): az azonosítók soronként, a `pack`-nek átadható listaként.
 - **Szöveg (`pdf2str`):** content módban az első oldal szövegét is kinyeri (`--no-text`: kikapcsolva; ha a `pdf2str.py` nincs meg, magától kimarad), de a naplóba **csak a mérőszámai kerülnek** (`text: {chars, words, lines, time[, error]}`), maga a szöveg nem (személyes adat lehet). A `report` kiírja, hány fájlban van szöveg, a karakterszámok mediánját, a kinyerés kivételeit típus szerint és a leglassabb kinyeréseket; `--list NOTEXT` / `--list TEXTERROR`: a szöveg nélküli, ill. kivételt adó fájlok azonosítói.
 - `pack`: mintakéréshez a megadott azonosítójú fájlok becsomagolása **könyvtár nélkül**, `<id>_<név>` néven (a `tar -T` az útvonalakat is eltárolná). `paths`: az azonosítók → teljes útvonalak (csak a vizsgált gépen használandó).
+
+## 13. C++ átirat: `pdfparse3.cpp`
+
+A `pdfparse3.cpp` / `pdfparse3.h` a `pdfparse3.py` **objektum-rétegének** átirata C++17-re, megjelenítőhöz: a [jpeg-nitro](https://github.com/gereoffy/jpeg-nitro) PDF-nézője épül rá (2026-11-ig ott volt, `src/nitropdf.cpp` néven; a commitjai az üzeneteikkel együtt átkerültek ide). Ugyanazt a hibatűrést hordozza, mint a Python változat (4–6. fejezet), de nem pontoz és nem diagnosztizál: csak megtalálja és kiadja az objektumokat.
+
+- **Amit tud:** a lexer (lezáratlan string, `#xx` névescape, páratlan hex nibble), az indirekt objektumok az xref szekciókból (tábla és stream, a `/Prev` / `/XRefStm` lánc, hibrid fájl) vagy, ha az xref hiányzik vagy rossz, a fájl végigolvasásával (javító mód), az object streamek, a stream-szűrők (Flate, LZW, ASCII85, ASCIIHex, RunLength, a PNG és TIFF predictorokkal; a képszűrőket a hívóra hagyja), a Standard security handler üres felhasználói jelszóval (RC4, AES-128, AES-256, a crypt filterek és a stream saját `/Crypt` szűrője), az oldalfa az öröklött attribútumokkal, és a content stream lexere (az inline képpel).
+- **Amit nem:** pontozás, sérülés-diagnózisok, JS / URI / csatolmány kinyerése, szövegkinyerés. Ezek a Python változat dolgai.
+- **Eltérés a működésben:** az objektumokat csak akkor olvassa be, amikor először kérik (`Doc::object`, `Doc::resolve`), és megtartja őket; a Python a `parse()` során az egész fájlt bejárja. Az értékek (`Val`) a dokumentum memóriájába mutatnak, másolás nélkül.
+- **Függőségek:** a C++17 standard könyvtár és a zlib. A hash-ek és a rejtjelek (MD5, SHA-256/384/512, RC4, AES-CBC) a `pdfcrypt.c` / `pdfcrypt.h` fájlban vannak (C99, `pc_` előtagú függvények), külső könyvtár nélkül.
+
+Az interfész a `pdfparse3.h`-ban (`namespace pdfparse3`): `Doc::open` (az adatot nem másolja), `object`, `resolve`, `get`, `stream`, `decode`, `root`, `pageCount`, `page`, `contents`, a `ContentLexer`, és a tesztekhez az `objectIds`, `repaired`, `crypt`, `notes`.
+
+**Fordítás és tesztek** (`Makefile`):
+
+```bash
+make            # pdfdump: a pdfparse3.cpp képe egy PDF-ről (minden obj kanonikusan kiírva, a streamek kibontott mérete és MD5-je, az oldalak)
+make asan       # pdfdump-asan: ugyanez AddressSanitizer / UBSan alatt
+make compare    # pdfdump a pdfdump.py (pdfparse3.py) ellen a samples/ és samples_new/ fájljain, a különbségek az OUT könyvtárba
+make test       # samples_new/run_tests.py, a C++ ellenőrzésekkel együtt
+```
+
+A `pdfdump.py` a Python változat képét írja ki ugyanabban a formátumban, a `pdfcompare.py` fájlonként összeveti a kettőt (hiányzó obj-ek, eltérő értékek és streamek, az oldalak operátorszáma). A két változat a repó 118 mintájából 116-on azonos eredményt ad; a két ismert eltérés szándékos: a `nullrun_values.pdf`-ben a Python a hosszú `null` sorozatot átugorja (4. fejezet), a C++ megtartja, a `xrefstm_corrupt.pdf`-ben pedig a C++ javító módja megtalálja azt az oldal-objektumot, amit a Python nullnak ad.
+
+**A C++ átirat saját hibái** (mind javítva, a commitjaik `nitropdf:` kezdetűek; a minták a `samples_new/` 15–19-es fájljai, a `run_tests.py` `cpp` ellenőrzései):
+
+| Hiba | Minta |
+|---|---|
+| a streamek vektora a `decode()` közben nőtt, a hivatkozás felszabadított memóriába mutatott (use after free) | `15a` |
+| a mélységkorlát csak visszafelé számított: 100 000 egymásba ágyazott tömb veremtúlcsordulás | `15b`, `15c` |
+| a javító mód visszatekerte az arénát, amibe közben egy objektum gyorsítótárazva lett | `15d`, `15e` |
+| object streamek láncán a betöltés korlát nélkül rekurzált | `15f` |
+| hibrid xref: a tábla szabad bejegyzése elrejtette az `/XRefStm` szerinti objektumot | `19a`, `19b` |
+
+A többi javítása (`/Length` nélküli rövid stream, inline kép, crypt filterek) a Python változatban is megvolt hibaként, azok a 10.13–10.16 pontban szerepelnek. Új hibánál mindkét változatot érdemes megnézni, és a mintát a `samples_new/`-ba tenni: a `run_tests.py` mindkettőn lefuttatja.
+
