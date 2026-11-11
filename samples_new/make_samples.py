@@ -312,3 +312,6 @@ write('16a_stream_no_length_short.pdf',d)
 #       a: AESV2; b: a kulcshossz csak a filter /Length-eben (a felso szintu hianyzik); c: nem /StdCF nevu filter;
 #       d: a filter /Length-e bitben; e: a streamnek nincs /Length-e; f, g, h: RC4 (V2) 128 es 40 bites kulccsal, ill.
 #       /Length nelkul (40 bit). Eddig ezeket visszafejtes nelkul hagytuk.
+#  19a, 19b: hibrid xref (kesz file-ok, szinten a review-bol): a 3-as obj egy object streamben van, az xref tablaban
+#       szabad ("f"), a tabla /XRefStm-je adja meg. 19a: a rejtett obj megvan (a C++ atiratban null lett: a tabla szabad
+#       bejegyzese nyert); 19b: egy ujabb szekcio (incremental update) felulirja, az az ervenyes.

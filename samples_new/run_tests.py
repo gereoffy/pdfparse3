@@ -261,6 +261,40 @@ check('/Crypt filter: /Identity, no name, an unknown name: as it is; a named one
        dec(b'<</Filter [/Crypt /FlateDecode] /DecodeParms [<</Name /StdCF>> null] /Length 4>>'))==(b'ABCD',b'ABCD',b'ABCD',enc),
       str(dec(b'<</Filter [/Crypt /FlateDecode] /DecodeParms [<</Name /StdCF>> null] /Length 4>>')))
 
+# 19: hibrid xref: az xref tabla szerint szabad, az /XRefStm szerinti object streamben levo obj megvan; egy ujabb szekcio
+#     (incremental update) felulirja
+for name,marker in (('19a_hybrid_xrefstm_hidden_object.pdf',b'hybrid'),('19b_hybrid_xrefstm_newer_revision.pdf',b'new')):
+    pdf,out=run(name)
+    with contextlib.redirect_stdout(io.StringIO()): v=pdf.get_obj(3)[0]
+    check(name[:3]+' hybrid xref: object 3',type(v)==dict and v.get(b'/Type')==b'/StructTreeRoot' and pstr(v.get(b'/Marker'))==marker and pdf.errors==[],str(v)+str(pdf.errors))
+
+# pdfparse3.cpp (a C++ atirat): ha a pdfdump le van forditva (make), a 15-19-es mintak rajta is: nincs elszallas, es
+# ugyanaz az eredmeny, mint a pythonnal
+DUMP=os.path.join(os.path.dirname(HERE),'pdfdump')
+if os.path.exists(DUMP):
+    import subprocess
+    def cdump(name):
+        r=subprocess.run([DUMP,os.path.join(HERE,name)],capture_output=True,timeout=120)
+        return r.returncode,r.stdout.decode('latin-1').splitlines()
+    def cobj(lines,oid): return next((l for l in lines if l.startswith('obj %d '%oid)),'')
+    for name,mode in (('15a_filter_ref_to_stream.pdf','xref'),('15b_nested_arrays_100000.pdf','xref'),('15c_nested_arrays_content.pdf','xref'),
+                      ('15d_repair_length_ref_objstm_big.pdf','repair'),('15e_repair_length_ref_objstm_small.pdf','repair'),('15f_objstm_filter_chain_3000.pdf','xref')):
+        rc,l=cdump(name)
+        check('cpp '+name[:3]+' read, one page',rc==0 and len(l)>0 and all(x in l[0] for x in ('pages=1','decerr=0','mode='+mode)),"rc=%d %s"%(rc,l[:1]))
+        if name[:3]=='15b': check('cpp 15b null below depth 64',cobj(l,5)=='obj 5 '+'['*64+'null'+']'*64,cobj(l,5)[:80])
+        if name[:3]=='15e': check('cpp 15e the catalog intact',cobj(l,5)=='obj 5 <</Big <4141414141414141> /Pages R2 /Type /Catalog>>',cobj(l,5)[:80])
+        if name[:3]=='15f': check('cpp 15f all objects',' objs=6004 ' in l[0],l[0])
+    rc,l=cdump('16a_stream_no_length_short.pdf')
+    check('cpp 16a short stream without /Length',rc==0 and ' stream dec=2 ' in cobj(l,4),cobj(l,4))
+    for name in sorted(n for n in os.listdir(HERE) if n[:2] in ('17','18') and n.endswith('.pdf')):
+        rc,l=cdump(name)
+        check('cpp '+name[:3]+' crypt filter: "q Q"',rc==0 and cobj(l,1).endswith(' stream dec=4 md5=52b7036b err=0'),cobj(l,1))
+    for name,marker in (('19a_hybrid_xrefstm_hidden_object.pdf','687962726964'),('19b_hybrid_xrefstm_newer_revision.pdf','6e6577')):
+        rc,l=cdump(name)
+        check('cpp '+name[:3]+' hybrid xref: object 3',rc==0 and cobj(l,3)=='obj 3 <</Marker <%s> /Type /StructTreeRoot>>'%marker,cobj(l,3))
+else:
+    print("(a pdfdump nincs leforditva: a pdfparse3.cpp ellenorzesei kimaradnak; make pdfdump)")
+
 # egysegtesztek
 def tok(s): return P.parse_pdf_obj(s,0,len(s),err=lambda m,n=1:None)[1]
 check('lexer token at end of buffer',(tok(b'123'),tok(b'true'),tok(b'R'),tok(b'12 0 R'))==([123],[b'true'],[b'R'],[12,0,b'R']),str((tok(b'123'),tok(b'true'),tok(b'R'))))
