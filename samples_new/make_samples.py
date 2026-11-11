@@ -315,3 +315,16 @@ write('16a_stream_no_length_short.pdf',d)
 #  19a, 19b: hibrid xref (kesz file-ok, szinten a review-bol): a 3-as obj egy object streamben van, az xref tablaban
 #       szabad ("f"), a tabla /XRefStm-je adja meg. 19a: a rejtett obj megvan (a C++ atiratban null lett: a tabla szabad
 #       bejegyzese nyert); 19b: egy ujabb szekcio (incremental update) felulirja, az az ervenyes.
+
+# 20: egesznel nagyobb szamok ott, ahol a C++ atirat egessze alakit (a nitropdf fuzz-probajabol): a sima cast ott
+#     definialatlan, es x86-on mast ad, mint ARM-on. a: /Rotate 41 jeggyel (most mindenhol 90: a legnagyobb int / 90 % 4);
+#     b: xref stream /Index-eben; c: az /Encrypt /V, /R, /P erteke.
+BIG=b'1'+b'0'*40
+d,_,_=build(BASE[:2]+[(3,b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Rotate '+BIG+b'>>')])
+write('20a_rotate_beyond_int.pdf',d)
+def rows20(offs,x):
+    return b''.join(struct.pack('>BIH',1,offs[k],0) if k in offs else struct.pack('>BIH',1,x,0) if k==4 else struct.pack('>BIH',0,0,0) for k in range(5))+struct.pack('>BIH',1,0,0)
+write('20b_xrefstm_index_beyond_int.pdf',build_xs(BASE,4,5,rows20,b'/Root 1 0 R/Index[0 5 '+BIG+b' 1]'))
+d,_,_=build(BASE+[(4,b'<</Filter/Standard/V '+BIG+b'/R '+BIG+b'/P -'+BIG+b'/O('+b'o'*32+b')/U('+b'u'*32+b')>>')])
+write('20c_encrypt_v_beyond_int.pdf',d.replace(b'/Root 1 0 R>>',b'/Root 1 0 R/Encrypt 4 0 R>>'))
+

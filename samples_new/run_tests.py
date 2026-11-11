@@ -268,7 +268,13 @@ for name,marker in (('19a_hybrid_xrefstm_hidden_object.pdf',b'hybrid'),('19b_hyb
     with contextlib.redirect_stdout(io.StringIO()): v=pdf.get_obj(3)[0]
     check(name[:3]+' hybrid xref: object 3',type(v)==dict and v.get(b'/Type')==b'/StructTreeRoot' and pstr(v.get(b'/Marker'))==marker and pdf.errors==[],str(v)+str(pdf.errors))
 
-# pdfparse3.cpp (a C++ atirat): ha a pdfdump le van forditva (make), a 15-19-es mintak rajta is: nincs elszallas, es
+# 20: egesznel nagyobb szam ott, ahol egesz kell (/Rotate, az xref stream /Index-e, az /Encrypt /V /R /P erteke): az oldal megvan
+for name in ('20a_rotate_beyond_int.pdf','20b_xrefstm_index_beyond_int.pdf','20c_encrypt_v_beyond_int.pdf'):
+    pdf,out=run(name)
+    with contextlib.redirect_stdout(io.StringIO()): v=pdf.get_obj(3)[0]
+    check(name[:3]+' number beyond an integer: the page is read',type(v)==dict and v.get(b'/Type')==b'/Page',str(v))
+
+# pdfparse3.cpp (a C++ atirat): ha a pdfdump le van forditva (make), a 15-20-as mintak rajta is: nincs elszallas, es
 # ugyanaz az eredmeny, mint a pythonnal
 DUMP=os.path.join(os.path.dirname(HERE),'pdfdump')
 if os.path.exists(DUMP):
@@ -292,6 +298,17 @@ if os.path.exists(DUMP):
     for name,marker in (('19a_hybrid_xrefstm_hidden_object.pdf','687962726964'),('19b_hybrid_xrefstm_newer_revision.pdf','6e6577')):
         rc,l=cdump(name)
         check('cpp '+name[:3]+' hybrid xref: object 3',rc==0 and cobj(l,3)=='obj 3 <</Marker <%s> /Type /StructTreeRoot>>'%marker,cobj(l,3))
+    # 20: a szam egessze alakitasa (toInt) a tipus hataran megall: a /Rotate 41 jeggyel mindenhol 90 (a sima cast x86-on 270-et adott)
+    rc,l=cdump('20a_rotate_beyond_int.pdf')
+    check('cpp 20a /Rotate of 41 digits: 90',rc==0 and any(x.startswith('page 1 ') and ' rotate=90 ' in x for x in l),str([x for x in l if x.startswith('page')]))
+    for name in ('20b_xrefstm_index_beyond_int.pdf','20c_encrypt_v_beyond_int.pdf'):
+        rc,l=cdump(name)
+        check('cpp '+name[:3]+' read, one page',rc==0 and len(l)>0 and 'pages=1' in l[0],"rc=%d %s"%(rc,l[:1]))
+    ASAN=os.path.join(os.path.dirname(HERE),'pdfdump-asan')
+    if os.path.exists(ASAN):     # (make asan: a definialatlan atalakitast csak a sanitizer latja)
+        for name in ('20a_rotate_beyond_int.pdf','20b_xrefstm_index_beyond_int.pdf','20c_encrypt_v_beyond_int.pdf'):
+            r=subprocess.run([ASAN,os.path.join(HERE,name)],capture_output=True,timeout=120)
+            check('cpp asan '+name[:3]+' no sanitizer report',r.returncode==0 and b'runtime error' not in r.stderr and b'AddressSanitizer' not in r.stderr,r.stderr.decode('latin-1')[:200])
 else:
     print("(a pdfdump nincs leforditva: a pdfparse3.cpp ellenorzesei kimaradnak; make pdfdump)")
 

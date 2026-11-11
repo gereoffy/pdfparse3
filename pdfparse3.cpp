@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -132,6 +133,11 @@ struct Tok {
     size_t pos = 0, end = 0;
     bool kw(const char *w) const { return k == T_KW && n == strlen(w) && memcmp(s, w, n) == 0; }
 };
+
+// A number as an integer within lo .. hi: beyond them the nearer one, a NaN 0. (The cast alone is
+// undefined for a double the type cannot hold, and x86 and ARM give different results: a /Rotate of
+// forty digits was 270 on one, 90 on the other.)
+int64_t toInt(double v, int64_t lo, int64_t hi) { return v >= (double)hi ? hi : v <= (double)lo ? lo : v == v ? (int64_t)v : 0; }
 
 // A token that is a number: an integer of up to 18 digits (with its sign), otherwise a real as
 // [+-]?(\d+\.?\d*|\.\d+) (no exponent); anything else is a keyword.
@@ -1449,7 +1455,7 @@ struct Doc::Impl {
         if (!rl) return;
         std::vector<int64_t> idx;
         if (index.t == ARRAY)
-            for (uint32_t k = 0; k < index.n; k++) idx.push_back(resolve(index.at(k)).num(0) > 0 ? (int64_t)resolve(index.at(k)).num(0) : 0);
+            for (uint32_t k = 0; k < index.n; k++) idx.push_back(toInt(resolve(index.at(k)).num(0), 0, UINT32_MAX));   // (object numbers, counts)
         else idx = {0, size.i};
         const uint8_t *dd = (const uint8_t *)dec.data.data();
         size_t pos = 0;
@@ -1666,8 +1672,8 @@ struct Doc::Impl {
             return v.t == STR ? std::string(v.s, v.n) : std::string();
         };
         std::string O = str("O"), U = str("U"), UE = str("UE");
-        int V = (int)resolve(enc.get("V")).num(0), R = (int)resolve(enc.get("R")).num(0);
-        int64_t P = (int64_t)resolve(enc.get("P")).num(0);
+        int V = (int)toInt(resolve(enc.get("V")).num(0), INT_MIN, INT_MAX), R = (int)toInt(resolve(enc.get("R")).num(0), INT_MIN, INT_MAX);
+        int64_t P = toInt(resolve(enc.get("P")).num(0), INT64_MIN, INT64_MAX);
         Val Lv = resolve(enc.get("Length"));
         int L = Lv.t == INT ? (int)Lv.i : 40;
         Val em = resolve(enc.get("EncryptMetadata"));
@@ -2088,7 +2094,7 @@ void Doc::collectPages() {
                 if (c[2] > c[0] && c[3] > c[1]) memcpy(p.crop, c, sizeof c);
             }
             Val rot = doc.resolve(inh.rotate);
-            if (rot.isNum()) p.rotate = (((int)rot.num() / 90) % 4 + 4) % 4 * 90;
+            if (rot.isNum()) p.rotate = (((int)toInt(rot.num(), INT_MIN, INT_MAX) / 90) % 4 + 4) % 4 * 90;
             Val uu = doc.resolve(node.get("UserUnit"));
             if (uu.isNum() && uu.num() > 0) p.userUnit = uu.num();
             doc.pages.push_back(p);
