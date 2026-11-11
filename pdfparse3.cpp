@@ -96,8 +96,19 @@ bool startsWith(const uint8_t *d, size_t n, size_t p, const char *s) {
 size_t find(const uint8_t *d, size_t from, size_t to, const char *s) {
     size_t l = strlen(s);
     if (to < l || from > to - l) return SIZE_MAX;
+#ifdef _WIN32
+    // (Windows has no memmem) its first byte by memchr, then the rest
+    if (!l) return from;
+    const uint8_t *p = d + from, *e = d + (to - l) + 1;
+    while (p < e && (p = (const uint8_t *)memchr(p, s[0], e - p))) {
+        if (!memcmp(p, s, l)) return (size_t)(p - d);
+        p++;
+    }
+    return SIZE_MAX;
+#else
     const void *q = memmem(d + from, to - from, s, l);
     return q ? (size_t)((const uint8_t *)q - d) : SIZE_MAX;
+#endif
 }
 
 size_t rfind(const uint8_t *d, size_t from, size_t to, const char *s) {
