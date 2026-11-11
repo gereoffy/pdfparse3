@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-# pdfparse3's view of a PDF in bench/pdfdump.cpp's format, to compare the two:
-#   bench/pdfdump.py [--pdfparse3 DIR] file.pdf
+# pdfparse3.py's view of a PDF in pdfdump.cpp's format (pdfparse3.cpp's view), to compare the two:
+#   ./pdfdump.py file.pdf
 import hashlib
 import io
 import os
@@ -9,11 +9,7 @@ import re
 import sys
 
 args = sys.argv[1:]
-lib = os.path.expanduser('~/Claude.AI/pdfparse3')
-if args and args[0] == '--pdfparse3':
-    lib = args[1]
-    args = args[2:]
-sys.path.insert(0, lib)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pdfparse3 as pp   # noqa: E402
 import pdf2str           # noqa: E402
 
@@ -39,7 +35,7 @@ def canon(v, depth=0):
     if isinstance(v, pp.PDFString):
         b = bytes(v.data)
         return '<%s>' % b.hex() if len(b) <= 32 else '<%d:%s>' % (len(b), md5s(b))
-    if type(v) == tuple and len(v) == 2 and v[0] == 'R':   # (an object number beyond 18 digits: a real for nitropdf)
+    if type(v) == tuple and len(v) == 2 and v[0] == 'R':   # (an object number beyond 18 digits: a real for pdfparse3.cpp)
         return 'R%d' % v[1] if v[1] < 10 ** 18 else '%.6g' % v[1]
     if type(v) == list: return '[' + ' '.join(canon(x, depth + 1) for x in v) + ']'
     if type(v) == dict:

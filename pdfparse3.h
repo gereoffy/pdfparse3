@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2026 A'rpi - part of jpeg-nitro (https://github.com/gereoffy/jpeg-nitro)
-// The tolerance of pdfparse3 (MIT, https://github.com/gereoffy/pdfparse3), ported.
+// Copyright (c) 2026 A'rpi - part of pdfparse3 (https://github.com/gereoffy/pdfparse3)
 //
-// nitropdf: a PDF file's objects (internal, C++; the renderer to come): the lexer, the indirect objects
+// pdfparse3.cpp: the object layer of pdfparse3.py in C++, with its tolerance (for a renderer: the PDF
+// viewer of jpeg-nitro builds on it). A PDF file's objects: the lexer, the indirect objects
 // found through the cross-reference sections (tables and streams, the /Prev and /XRefStm chain) or,
 // when those are missing or wrong, by reading the whole file (the repair mode), the object streams,
 // the stream filters (Flate, LZW, ASCII85, ASCIIHex, RunLength with the PNG and TIFF predictors;
@@ -16,7 +16,7 @@
 #include <string_view>
 #include <vector>
 
-namespace nitropdf {
+namespace pdfparse3 {
 
 enum Type : uint8_t { NUL, BOOL, INT, REAL, STR, NAME, ARRAY, DICT, REF, KW };
 
@@ -128,4 +128,4 @@ private:
     std::vector<Val> args;
 };
 
-}  // namespace nitropdf
+}  // namespace pdfparse3

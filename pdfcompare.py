@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-# bench/pdfdump (nitropdf) against bench/pdfdump.py (pdfparse3) on PDF files:
-#   bench/pdfcompare.py [--py PYTHON] OUTDIR file.pdf ...   (the two dumps: OUTDIR/<name>.c and .py)
+# pdfdump (pdfparse3.cpp) against pdfdump.py (pdfparse3.py) on PDF files:
+#   ./pdfcompare.py [--py PYTHON] OUTDIR file.pdf ...   (the two dumps: OUTDIR/<name>.c and .py)
 # (pdfparse3 under pypy3 by default, where there is one: several times faster)
 # Per file: the objects missing on either side, the values and the streams that differ, the pages'
 # operator counts; the differing lines into OUTDIR/<name>.diff.

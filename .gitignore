@@ -11,3 +11,9 @@ files.txt
 *files.txt
 *.jsonl
 *.jsonl.gz
+
+# pdfparse3.cpp: a forditott teszteszkoz
+/pdfdump
+/pdfdump-asan
+*.o
+*.dSYM/

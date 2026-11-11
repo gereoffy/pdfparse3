@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2026 A'rpi - part of jpeg-nitro (https://github.com/gereoffy/jpeg-nitro)
+// Copyright (c) 2026 A'rpi - part of pdfparse3 (https://github.com/gereoffy/pdfparse3)
 //
-// nitrocrypt: MD5 (RFC 1321), SHA-256/384/512 (FIPS 180-4), RC4 and AES (FIPS 197) in CBC
+// pdfcrypt: MD5 (RFC 1321), SHA-256/384/512 (FIPS 180-4), RC4 and AES (FIPS 197) in CBC
 // mode, plainly written: keys are short, and what they encrypt is decrypted once.
 #include "pdfcrypt.h"
 
@@ -129,33 +129,33 @@ static void md5Fn(void *h, const uint8_t *b) { md5Block((uint32_t *)h, b); }
 static void sha256Fn(void *h, const uint8_t *b) { sha256Block((uint32_t *)h, b); }
 static void sha512Fn(void *h, const uint8_t *b) { sha512Block((uint64_t *)h, b); }
 
-void nc_md5(const void *data, size_t len, uint8_t out[16]) {
+void pc_md5(const void *data, size_t len, uint8_t out[16]) {
     uint32_t h[4] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476};
     mdHash((const uint8_t *)data, len, 64, 0, md5Fn, h);
     for (int k = 0; k < 16; k++) out[k] = (uint8_t)(h[k / 4] >> (8 * (k % 4)));
 }
 
-void nc_sha256(const void *data, size_t len, uint8_t out[32]) {
+void pc_sha256(const void *data, size_t len, uint8_t out[32]) {
     uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
     mdHash((const uint8_t *)data, len, 64, 1, sha256Fn, h);
     for (int k = 0; k < 32; k++) out[k] = (uint8_t)(h[k / 4] >> (24 - 8 * (k % 4)));
 }
 
-void nc_sha384(const void *data, size_t len, uint8_t out[48]) {
+void pc_sha384(const void *data, size_t len, uint8_t out[48]) {
     uint64_t h[8] = {0xcbbb9d5dc1059ed8, 0x629a292a367cd507, 0x9159015a3070dd17, 0x152fecd8f70e5939,
                      0x67332667ffc00b31, 0x8eb44a8768581511, 0xdb0c2e0d64f98fa7, 0x47b5481dbefa4fa4};
     mdHash((const uint8_t *)data, len, 128, 1, sha512Fn, h);
     for (int k = 0; k < 48; k++) out[k] = (uint8_t)(h[k / 8] >> (56 - 8 * (k % 8)));
 }
 
-void nc_sha512(const void *data, size_t len, uint8_t out[64]) {
+void pc_sha512(const void *data, size_t len, uint8_t out[64]) {
     uint64_t h[8] = {0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
                      0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179};
     mdHash((const uint8_t *)data, len, 128, 1, sha512Fn, h);
     for (int k = 0; k < 64; k++) out[k] = (uint8_t)(h[k / 8] >> (56 - 8 * (k % 8)));
 }
 
-void nc_rc4(const uint8_t *key, size_t keyLen, const uint8_t *in, size_t len, uint8_t *out) {
+void pc_rc4(const uint8_t *key, size_t keyLen, const uint8_t *in, size_t len, uint8_t *out) {
     uint8_t S[256];
     for (int k = 0; k < 256; k++) S[k] = (uint8_t)k;
     if (keyLen == 0) keyLen = 1, key = (const uint8_t *)"";
@@ -229,7 +229,7 @@ static inline uint32_t subWord(uint32_t w) {
     return (uint32_t)SBOX[w >> 24] << 24 | (uint32_t)SBOX[(w >> 16) & 255] << 16 | (uint32_t)SBOX[(w >> 8) & 255] << 8 | SBOX[w & 255];
 }
 
-int nc_aes_init(nc_aes *a, const uint8_t *key, size_t keyLen) {
+int pc_aes_init(pc_aes *a, const uint8_t *key, size_t keyLen) {
     if (keyLen != 16 && keyLen != 24 && keyLen != 32) return 0;
     int nk = (int)keyLen / 4;
     a->rounds = nk + 6;
@@ -252,7 +252,7 @@ static inline void addKey(uint8_t s[16], const uint32_t *w) {
         for (int r = 0; r < 4; r++) s[4 * c + r] ^= (uint8_t)(w[c] >> (24 - 8 * r));
 }
 
-static void encryptBlock(const nc_aes *a, uint8_t s[16]) {
+static void encryptBlock(const pc_aes *a, uint8_t s[16]) {
     addKey(s, a->ek);
     for (int round = 1; round <= a->rounds; round++) {
         for (int k = 0; k < 16; k++) s[k] = SBOX[s[k]];
@@ -272,7 +272,7 @@ static void encryptBlock(const nc_aes *a, uint8_t s[16]) {
     }
 }
 
-static void decryptBlock(const nc_aes *a, uint8_t s[16]) {
+static void decryptBlock(const pc_aes *a, uint8_t s[16]) {
     addKey(s, a->ek + 4 * a->rounds);
     for (int round = a->rounds - 1; round >= 0; round--) {
         uint8_t t[16];   // InvShiftRows, InvSubBytes
@@ -291,7 +291,7 @@ static void decryptBlock(const nc_aes *a, uint8_t s[16]) {
     }
 }
 
-void nc_aes_decrypt_cbc(const nc_aes *a, uint8_t iv[16], const uint8_t *in, size_t len, uint8_t *out) {
+void pc_aes_decrypt_cbc(const pc_aes *a, uint8_t iv[16], const uint8_t *in, size_t len, uint8_t *out) {
     for (size_t o = 0; o + 16 <= len; o += 16) {
         uint8_t c[16], s[16];
         memcpy(c, in + o, 16);
@@ -302,7 +302,7 @@ void nc_aes_decrypt_cbc(const nc_aes *a, uint8_t iv[16], const uint8_t *in, size
     }
 }
 
-void nc_aes_encrypt_cbc(const nc_aes *a, uint8_t iv[16], const uint8_t *in, size_t len, uint8_t *out) {
+void pc_aes_encrypt_cbc(const pc_aes *a, uint8_t iv[16], const uint8_t *in, size_t len, uint8_t *out) {
     for (size_t o = 0; o + 16 <= len; o += 16) {
         uint8_t s[16];
         for (int k = 0; k < 16; k++) s[k] = in[o + k] ^ iv[k];

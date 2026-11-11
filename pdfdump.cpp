@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2026 A'rpi - part of jpeg-nitro (https://github.com/gereoffy/jpeg-nitro)
+// Copyright (c) 2026 A'rpi - part of pdfparse3 (https://github.com/gereoffy/pdfparse3)
 //
-// pdfdump: nitropdf's view of a PDF, to compare with pdfparse3's (bench/pdfdump.py writes the
+// pdfdump: pdfparse3.cpp's view of a PDF, to compare with pdfparse3.py's (pdfdump.py writes the
 // same format): every object found, its value written canonically, its stream's decoded length
 // and MD5; the pages, their boxes and their content's operator count.
 //
-//   cc -std=c99 -O2 -c src/nitrocrypt.c -o bench/nitrocrypt.o
-//   c++ -std=c++17 -O2 -Isrc bench/pdfdump.cpp src/nitropdf.cpp bench/nitrocrypt.o -lz -o bench/pdfdump
-//   bench/pdfdump [-q] file.pdf      (-q: the summary only)
+//   cc -std=c99 -O2 -c pdfcrypt.c -o pdfcrypt.o
+//   c++ -std=c++17 -O2 pdfdump.cpp pdfparse3.cpp pdfcrypt.o -lz -o pdfdump
+//   ./pdfdump [-q] file.pdf      (-q: the summary only)
 #include "pdfcrypt.h"
 #include "pdfparse3.h"
 
@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-using namespace nitropdf;
+using namespace pdfparse3;
 
 static std::string hexs(const uint8_t *p, size_t n) {
     std::string s;
@@ -31,7 +31,7 @@ static std::string hexs(const uint8_t *p, size_t n) {
 
 static std::string md5s(const void *p, size_t n) {
     uint8_t h[16];
-    nc_md5(p, n, h);
+    pc_md5(p, n, h);
     return hexs(h, 4);
 }
 
