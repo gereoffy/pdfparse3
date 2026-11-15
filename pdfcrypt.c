@@ -7,6 +7,22 @@
 
 #include <string.h>
 
+// Clang intrinsics, with no extra build flags on x86 (AES-NI is detected at run time).
+// ARM uses the target's AES feature: e.g. -mcpu=apple-m1 or -march=armv8-a+crypto.
+// -DPC_AES_HARDWARE=0 keeps only the portable implementation, on either architecture.
+#ifndef PC_AES_HARDWARE
+#define PC_AES_HARDWARE 1
+#endif
+#if PC_AES_HARDWARE && defined(__clang__)
+#if defined(__x86_64__)
+#include <wmmintrin.h>
+#define PC_AES_X86 1
+#elif defined(__aarch64__) && defined(__ARM_FEATURE_AES)
+#include <arm_neon.h>
+#define PC_AES_ARM 1
+#endif
+#endif
+
 static inline uint32_t rol(uint32_t x, int c) { return (x << c) | (x >> (32 - c)); }
 static inline uint32_t ror(uint32_t x, int c) { return (x >> c) | (x << (32 - c)); }
 static inline uint64_t ror64(uint64_t x, int c) { return (x >> c) | (x << (64 - c)); }
@@ -156,21 +172,24 @@ void pc_sha512(const void *data, size_t len, uint8_t out[64]) {
 }
 
 void pc_rc4(const uint8_t *key, size_t keyLen, const uint8_t *in, size_t len, uint8_t *out) {
-    uint8_t S[256];
-    for (int k = 0; k < 256; k++) S[k] = (uint8_t)k;
+    uint32_t S[256];   // word-sized loads/stores; every value is still a byte
+    for (int k = 0; k < 256; k++) S[k] = (uint32_t)k;
     if (keyLen == 0) keyLen = 1, key = (const uint8_t *)"";
+    size_t q = 0;
     for (int k = 0, j = 0; k < 256; k++) {
-        j = (j + S[k] + key[k % keyLen]) & 255;
-        uint8_t t = S[k];
+        j = (j + S[k] + key[q]) & 255;
+        if (++q == keyLen) q = 0;   // cycle through the key without integer division
+        uint32_t t = S[k];
         S[k] = S[j], S[j] = t;
     }
     int i = 0, j = 0;
     for (size_t k = 0; k < len; k++) {
         i = (i + 1) & 255;
-        j = (j + S[i]) & 255;
-        uint8_t t = S[i];
-        S[i] = S[j], S[j] = t;
-        out[k] = in[k] ^ S[(S[i] + S[j]) & 255];
+        uint32_t a = S[i];
+        j = (j + a) & 255;
+        uint32_t b = S[j];
+        S[i] = b, S[j] = a;
+        out[k] = in[k] ^ S[(a + b) & 255];   // no reload after the possibly aliasing swap
     }
 }
 
@@ -291,7 +310,101 @@ static void decryptBlock(const pc_aes *a, uint8_t s[16]) {
     }
 }
 
+#if defined(PC_AES_X86) || defined(PC_AES_ARM)
+#define PC_AES_TARGET __attribute__((target("aes")))
+#if defined(PC_AES_X86)
+typedef __m128i aesVec;
+#else
+typedef uint8x16_t aesVec;
+#endif
+
+static int aesHardwareAvailable(void) {
+#if defined(PC_AES_X86) && !defined(__AES__)
+    return __builtin_cpu_supports("aes");
+#else
+    return 1;   // the build's minimum CPU already includes AES
+#endif
+}
+
+// ek stores big-endian words, not bytes in memory order. Both backends use the
+// equivalent inverse cipher: reverse the keys and InvMixColumns the middle ones.
+static PC_AES_TARGET void aesHardwareKeys(const pc_aes *a, aesVec keys[15], int decrypt) {
+    for (int round = 0; round <= a->rounds; round++) {
+        const uint32_t *w = a->ek + 4 * (decrypt ? a->rounds - round : round);
+        uint8_t b[16];
+        for (int k = 0; k < 4; k++)
+            for (int r = 0; r < 4; r++) b[4 * k + r] = (uint8_t)(w[k] >> (24 - 8 * r));
+#if defined(PC_AES_X86)
+        keys[round] = _mm_loadu_si128((const __m128i *)b);
+        if (decrypt && round && round < a->rounds) keys[round] = _mm_aesimc_si128(keys[round]);
+#else
+        keys[round] = vld1q_u8(b);
+        if (decrypt && round && round < a->rounds) keys[round] = vaesimcq_u8(keys[round]);
+#endif
+    }
+}
+
+static PC_AES_TARGET void aesHardwareDecryptCbc(const pc_aes *a, uint8_t iv[16], const uint8_t *in, size_t len, uint8_t *out) {
+    aesVec keys[15];
+    aesHardwareKeys(a, keys, 1);
+#if defined(PC_AES_X86)
+    aesVec prev = _mm_loadu_si128((const __m128i *)iv);
+    for (size_t o = 0; o + 16 <= len; o += 16) {
+        aesVec c = _mm_loadu_si128((const __m128i *)(in + o));
+        aesVec s = _mm_xor_si128(c, keys[0]);
+        for (int r = 1; r < a->rounds; r++) s = _mm_aesdec_si128(s, keys[r]);
+        s = _mm_aesdeclast_si128(s, keys[a->rounds]);
+        _mm_storeu_si128((__m128i *)(out + o), _mm_xor_si128(s, prev));
+        prev = c;   // keep the ciphertext before writing out (in == out is allowed)
+    }
+    _mm_storeu_si128((__m128i *)iv, prev);
+#else
+    aesVec prev = vld1q_u8(iv);
+    for (size_t o = 0; o + 16 <= len; o += 16) {
+        aesVec c = vld1q_u8(in + o), s = c;
+        // ARM's AESD applies AddRoundKey before InvShiftRows/InvSubBytes.
+        for (int r = 0; r < a->rounds - 1; r++) s = vaesimcq_u8(vaesdq_u8(s, keys[r]));
+        s = veorq_u8(vaesdq_u8(s, keys[a->rounds - 1]), keys[a->rounds]);
+        vst1q_u8(out + o, veorq_u8(s, prev));
+        prev = c;
+    }
+    vst1q_u8(iv, prev);
+#endif
+}
+
+static PC_AES_TARGET void aesHardwareEncryptCbc(const pc_aes *a, uint8_t iv[16], const uint8_t *in, size_t len, uint8_t *out) {
+    aesVec keys[15];
+    aesHardwareKeys(a, keys, 0);
+#if defined(PC_AES_X86)
+    aesVec s = _mm_loadu_si128((const __m128i *)iv);
+    for (size_t o = 0; o + 16 <= len; o += 16) {
+        s = _mm_xor_si128(s, _mm_loadu_si128((const __m128i *)(in + o)));
+        s = _mm_xor_si128(s, keys[0]);
+        for (int r = 1; r < a->rounds; r++) s = _mm_aesenc_si128(s, keys[r]);
+        s = _mm_aesenclast_si128(s, keys[a->rounds]);
+        _mm_storeu_si128((__m128i *)(out + o), s);
+    }
+    _mm_storeu_si128((__m128i *)iv, s);
+#else
+    aesVec s = vld1q_u8(iv);
+    for (size_t o = 0; o + 16 <= len; o += 16) {
+        s = veorq_u8(s, vld1q_u8(in + o));
+        for (int r = 0; r < a->rounds - 1; r++) s = vaesmcq_u8(vaeseq_u8(s, keys[r]));
+        s = veorq_u8(vaeseq_u8(s, keys[a->rounds - 1]), keys[a->rounds]);
+        vst1q_u8(out + o, s);
+    }
+    vst1q_u8(iv, s);
+#endif
+}
+#endif
+
 void pc_aes_decrypt_cbc(const pc_aes *a, uint8_t iv[16], const uint8_t *in, size_t len, uint8_t *out) {
+#if defined(PC_AES_X86) || defined(PC_AES_ARM)
+    if (len >= 16 && aesHardwareAvailable()) {
+        aesHardwareDecryptCbc(a, iv, in, len, out);
+        return;
+    }
+#endif
     for (size_t o = 0; o + 16 <= len; o += 16) {
         uint8_t c[16], s[16];
         memcpy(c, in + o, 16);
@@ -303,6 +416,12 @@ void pc_aes_decrypt_cbc(const pc_aes *a, uint8_t iv[16], const uint8_t *in, size
 }
 
 void pc_aes_encrypt_cbc(const pc_aes *a, uint8_t iv[16], const uint8_t *in, size_t len, uint8_t *out) {
+#if defined(PC_AES_X86) || defined(PC_AES_ARM)
+    if (len >= 16 && aesHardwareAvailable()) {
+        aesHardwareEncryptCbc(a, iv, in, len, out);
+        return;
+    }
+#endif
     for (size_t o = 0; o + 16 <= len; o += 16) {
         uint8_t s[16];
         for (int k = 0; k < 16; k++) s[k] = in[o + k] ^ iv[k];

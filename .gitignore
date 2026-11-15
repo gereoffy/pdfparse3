@@ -15,5 +15,7 @@ files.txt
 # pdfparse3.cpp: a forditott teszteszkoz
 /pdfdump
 /pdfdump-asan
+/pdfcrypt-test
+/pdfcrypt-test-soft
 *.o
 *.dSYM/
