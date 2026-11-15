@@ -3,7 +3,7 @@
 #   make asan       pdfdump-asan: the same with the address and undefined behaviour sanitizers
 #   make compare    pdfdump against pdfdump.py (pdfparse3.py) on samples/ and samples_new/, the diffs into OUT
 #   make test       samples_new/run_tests.py (pdfparse3.py's tests, and pdfparse3.cpp's when pdfdump is built)
-#   make test-crypt AES-CBC and RC4 known answers, native and forced portable AES backends
+#   make test-crypt AES-CBC, RC4 and MD5 known answers, native and portable AES backends
 CC  ?= cc
 CXX ?= c++
 OUT ?= /tmp/pdfcompare

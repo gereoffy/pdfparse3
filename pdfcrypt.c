@@ -43,6 +43,10 @@ static void md5Block(uint32_t h[4], const uint8_t *p) {
     uint32_t w[16];
     for (int k = 0; k < 16; k++) w[k] = p[4 * k] | p[4 * k + 1] << 8 | p[4 * k + 2] << 16 | (uint32_t)p[4 * k + 3] << 24;
     uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
+    // Constant round functions, message indices and rotates after unrolling.
+#if defined(__clang__)
+#pragma clang loop unroll(full)
+#endif
     for (int k = 0; k < 64; k++) {
         uint32_t f;
         int g;

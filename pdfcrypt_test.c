@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 A'rpi - part of pdfparse3
-// AES-CBC (NIST SP 800-38A F.2) and RC4 (RFC 6229) known answers and buffer handling.
+// AES-CBC (NIST SP 800-38A F.2), RC4 (RFC 6229), MD5 (RFC 1321) and buffer handling.
 #include "pdfcrypt.h"
 
 #include <stdio.h>
@@ -139,11 +139,54 @@ static void rc4KnownAnswers(void) {
     }
 }
 
+static void md5KnownAnswers(void) {
+    static const char *messages[] = {
+        "", "a", "abc", "message digest", "abcdefghijklmnopqrstuvwxyz",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+        "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+    };
+    static const char *digests[] = {
+        "d41d8cd98f00b204e9800998ecf8427e", "0cc175b9c0f1b6a831c399e269772661", "900150983cd24fb0d6963f7d28e17f72",
+        "f96b697d7cb7938d525a2f31aaf161d0", "c3fcd3d76192e4007dfb496cca67e13b", "d174ab98d277d9f5a5611c2c9f419d9f",
+        "57edf4a22be3c955ac49da2e2107b67a",
+    };
+    uint8_t expected[16], out[16];
+    for (size_t k = 0; k < sizeof messages / sizeof *messages; k++) {
+        unhex(digests[k], expected);
+        pc_md5(messages[k], strlen(messages[k]), out);
+        check(!memcmp(out, expected, 16), "RFC 1321 MD5");
+    }
+    // bytes(range(n)), independently computed with Python hashlib.
+    static const size_t lengths[] = {10, 16, 21, 25, 55, 56, 63, 64, 65, 119, 120, 127, 128};
+    static const char *padded[] = {
+        "c56bd5480f6e5413cb62a0ad9666613a", "1ac1ef01e96caf1be0d329331a4fc2a8", "7e437c81824d3982e70c88b5da8ea94b",
+        "d983c63bf41853056787fe1bb764dbff", "6912ee65fff2d9f9ce2508cddf8bcda0", "51fdd1acda72405dfdfa03fcb85896d7",
+        "48a6295221902e8e0938f773a7185e72", "b2d3f56bc197fd985d5965079b5e7148", "8bd7053801c768420faf816fadba971c",
+        "1c772251899a7ff007400b888d6b2042", "b7ba1efc6022e9ed272f00b8831e26e6", "8402b21e7bc7906493bae0dac017f1f9",
+        "37eff01866ba3f538421b30b7cbefcac",
+    };
+    uint8_t data[144];
+    for (int offset = 0; offset < 16; offset++)
+        for (size_t k = 0; k < sizeof lengths / sizeof *lengths; k++) {
+            size_t n = lengths[k];
+            for (size_t i = 0; i < n; i++) data[offset + i] = (uint8_t)i;
+            unhex(padded[k], expected);
+            pc_md5(data + offset, n, out);
+            check(!memcmp(out, expected, 16), "MD5 alignment, object-key lengths and padding boundaries");
+            if (n == 16) {
+                pc_md5(data + offset, n, data + offset);
+                check(!memcmp(data + offset, expected, 16), "MD5 overlapping input/output in password derivation");
+            }
+        }
+}
+
 int main(void) {
     knownAnswers();
     roundTrips();
     puts("AES-CBC: NIST AES-128/192/256, alignment, in-place, split calls and IVs OK");
     rc4KnownAnswers();
     puts("RC4: RFC 6229, short buffers and in-place OK");
+    md5KnownAnswers();
+    puts("MD5: RFC 1321, object-key lengths, padding, alignment and overlapping output OK");
     return 0;
 }

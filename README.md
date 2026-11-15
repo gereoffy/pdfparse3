@@ -579,7 +579,7 @@ A `pdfparse3.cpp` / `pdfparse3.h` a `pdfparse3.py` **objektum-rétegének** áti
 
 A `pdfcrypt.c` Clanggal x86-64-en futásidőben választja az AES-NI-t, szoftveres fallbackkel; ehhez nem kell `-maes` vagy AVX2. ARM64-en a célprocesszor AES-támogatásával használja az ARM Crypto intrinsics függvényeit (pl. `-mcpu=apple-m1`, Linux/Windows alatt `-march=armv8-a+crypto`); alap `armv8-a` célra a szoftveres változat fordul. A `-DPC_AES_HARDWARE=0` mindkét platformon kizárja a hardveres backendet. A CBC egyblokkos ciklust használ, az API és a kulcskontextus változatlan. A hash-ek szoftveresek maradtak.
 
-Az RC4 skaláris: 32 bites állapottáblát és osztás nélküli kulcsindexelést használ, a bájtonkénti ciklus pedig a cserélt értékeket regiszterben tartja az állapottábla újraolvasása helyett.
+Az RC4 skaláris: 32 bites állapottáblát és osztás nélküli kulcsindexelést használ, a bájtonkénti ciklus pedig a cserélt értékeket regiszterben tartja az állapottábla újraolvasása helyett. Az MD5 64 lépését Clang teljesen kibontja, így a körfüggvények, indexek és forgatások fordításkor konstansok lesznek. Mindkét gyorsítás külön CPU-kiterjesztés nélkül működik x86-64-en és ARM64-en.
 
 Az interfész a `pdfparse3.h`-ban (`namespace pdfparse3`): `Doc::open` (az adatot nem másolja), `object`, `resolve`, `get`, `stream`, `decode`, `root`, `pageCount`, `page`, `contents`, a `ContentLexer`, és a tesztekhez az `objectIds`, `repaired`, `crypt`, `notes`.
 
@@ -590,7 +590,7 @@ make            # pdfdump: a pdfparse3.cpp képe egy PDF-ről (minden obj kanoni
 make asan       # pdfdump-asan: ugyanez AddressSanitizer / UBSan alatt
 make compare    # pdfdump a pdfdump.py (pdfparse3.py) ellen a samples/ és samples_new/ fájljain, a különbségek az OUT könyvtárba
 make test       # samples_new/run_tests.py, a C++ ellenőrzésekkel együtt
-make test-crypt # AES-CBC NIST- és RC4 RFC 6229-vektorok, natív és szoftveres AES-backend
+make test-crypt # AES-CBC, RC4 és MD5 tesztvektorok, natív és szoftveres AES-backend
 ```
 
 A `pdfdump.py` a Python változat képét írja ki ugyanabban a formátumban, a `pdfcompare.py` fájlonként összeveti a kettőt (hiányzó obj-ek, eltérő értékek és streamek, az oldalak operátorszáma). A két változat a repó 118 mintájából 116-on azonos eredményt ad; a két ismert eltérés szándékos: a `nullrun_values.pdf`-ben a Python a hosszú `null` sorozatot átugorja (4. fejezet), a C++ megtartja, a `xrefstm_corrupt.pdf`-ben pedig a C++ javító módja megtalálja azt az oldal-objektumot, amit a Python nullnak ad.
